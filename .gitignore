@@ -4,7 +4,6 @@ spark-sa-key.json
 
 # Environment and Secrets
 .env
-.env.*
 k8s-secrets.yaml
 
 # Python Cache
