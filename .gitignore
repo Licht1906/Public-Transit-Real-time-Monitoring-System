@@ -1,0 +1,21 @@
+# Google Cloud Platform & Keys
+*.json
+spark-sa-key.json
+
+# Environment and Secrets
+.env
+k8s-secrets.yaml
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE / OS Files
+.vscode/
+.idea/
+.DS_Store
+
+# Temporary outputs/logs
+*.log
+scratch/
