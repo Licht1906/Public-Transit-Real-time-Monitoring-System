@@ -1,5 +1,5 @@
 # Bật KRaft mode (không dùng Zookeeper nữa)
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
   name: controller
@@ -19,7 +19,7 @@ spec:
         size: 20Gi
         deleteClaim: false
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: kafka
