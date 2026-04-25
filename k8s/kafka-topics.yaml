@@ -1,4 +1,4 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: bus-arrivals
@@ -9,7 +9,7 @@ spec:
   partitions: 3
   replicas: 1
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: mrt-crowd
@@ -20,7 +20,7 @@ spec:
   partitions: 2
   replicas: 1
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: carpark-lots
@@ -31,7 +31,7 @@ spec:
   partitions: 2
   replicas: 1
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: ev-stations
@@ -42,7 +42,7 @@ spec:
   partitions: 2
   replicas: 1
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: taxi-positions
@@ -53,7 +53,7 @@ spec:
   partitions: 2
   replicas: 1
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: train-alerts

@@ -1,4 +1,3 @@
-# Google Cloud Platform & Keys
 *.json
 spark-sa-key.json
 
