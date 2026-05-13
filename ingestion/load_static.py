@@ -2,16 +2,20 @@
 load_static.py — Tải Bus Stops, Bus Routes, Bus Services từ LTA vào MongoDB
 Chạy 1 lần duy nhất. Data này ít thay đổi.
 """
-import requests
-import pymongo
 import os
 import time
 
+import pymongo
+import requests
+
 KEY    = os.getenv("LTA_API_KEY", "your_key")
 BASE   = "https://datamall2.mytransport.sg/ltaodataservice"
-HDRS   = {"AccountKey": KEY}
+HDRS   = {
+    "AccountKey": KEY,
+    "accept": "application/json",
+}
 client = pymongo.MongoClient(os.getenv("MONGODB_URI",
-         "mongodb://localhost:27017"))
+         "mongodb://root:Transit%402024@localhost:27017/transit_db?authSource=admin"))
 db     = client["transit_db"]
 
 def fetch_all(endpoint):
@@ -20,7 +24,23 @@ def fetch_all(endpoint):
         params = {"$skip": skip} if skip else {}
         r = requests.get(f"{BASE}/{endpoint}", headers=HDRS,
                          params=params, timeout=15)
-        data = r.json().get("value", [])
+        try:
+            r.raise_for_status()
+            payload = r.json()
+        except requests.HTTPError as exc:
+            preview = r.text[:300].strip()
+            raise RuntimeError(
+                f"LTA API HTTP {r.status_code} tại endpoint {endpoint}. "
+                f"Body preview: {preview}"
+            ) from exc
+        except requests.exceptions.JSONDecodeError as exc:
+            preview = r.text[:300].strip()
+            raise RuntimeError(
+                f"LTA API trả về non-JSON tại endpoint {endpoint}. "
+                f"Body preview: {preview}"
+            ) from exc
+
+        data = payload.get("value", [])
         if not data:
             break
         records.extend(data)

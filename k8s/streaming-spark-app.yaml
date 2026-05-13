@@ -7,7 +7,7 @@ spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: "apache/spark-py:3.5.0"
+  image: "gcr.io/spark-operator/spark-py:v3.5.0"
   mainApplicationFile: "s3a://sg-transit-data/jobs/streaming_job.py"
   sparkVersion: "3.5.0"
   restartPolicy:
@@ -17,7 +17,7 @@ spec:
   deps:
     packages:
       - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0"
-      - "org.mongodb.spark:mongo-spark-connector_2.12:10.2.0"
+      - "org.mongodb.spark:mongo-spark-connector_2.12:10.6.1"
       - "org.apache.hadoop:hadoop-aws:3.3.4"
       - "com.amazonaws:aws-java-sdk-bundle:1.12.262"
   driver:
