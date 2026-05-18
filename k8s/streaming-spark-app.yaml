@@ -2,28 +2,33 @@ apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
   name: transit-streaming
-  namespace: spark-operator
+  namespace: default
 spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: "apache/spark-py:3.5.0"
+  image: "apache/spark:3.5.0"
   mainApplicationFile: "s3a://sg-transit-data/jobs/streaming_job.py"
   sparkVersion: "3.5.0"
   restartPolicy:
     type: Always
     onFailureRetries: 3
     onFailureRetryInterval: 30
+  sparkConf:
+    spark.jars.ivy: "/tmp/.ivy2"
+    spark.hadoop.fs.s3a.endpoint: "http://minio.data.svc.cluster.local:9000"
+    spark.hadoop.fs.s3a.path.style.access: "true"
+    spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
   deps:
     packages:
       - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0"
-      - "org.mongodb.spark:mongo-spark-connector_2.12:10.2.0"
+      - "org.mongodb.spark:mongo-spark-connector_2.12:10.6.1"
       - "org.apache.hadoop:hadoop-aws:3.3.4"
       - "com.amazonaws:aws-java-sdk-bundle:1.12.262"
   driver:
     cores: 1
     memory: "1g"
-    serviceAccount: spark
+    serviceAccount: spark-operator-spark
     env:
     - name: KAFKA_BOOTSTRAP
       valueFrom:
@@ -31,10 +36,7 @@ spec:
           name: transit-config
           key: KAFKA_BOOTSTRAP
     - name: MONGODB_URI
-      valueFrom:
-        secretKeyRef:
-          name: transit-secrets
-          key: MONGODB_URI
+      value: "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017"
     - name: MINIO_ENDPOINT
       valueFrom:
         configMapKeyRef:
@@ -55,7 +57,28 @@ spec:
         secretKeyRef:
           name: transit-secrets
           key: MINIO_SECRET_KEY
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: transit-secrets
+          key: MINIO_ACCESS_KEY
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: transit-secrets
+          key: MINIO_SECRET_KEY
   executor:
     cores: 1
     instances: 1
     memory: "1g"
+    env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: transit-secrets
+          key: MINIO_ACCESS_KEY
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: transit-secrets
+          key: MINIO_SECRET_KEY
