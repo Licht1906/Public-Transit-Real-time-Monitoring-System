@@ -1,0 +1,156 @@
+# cleanup-cronjob.yaml
+# Vị trí: big_data/k8s/cleanup-cronjob.yaml
+#
+# Chạy cleanup.py mỗi tiếng 1 lần để xóa data cũ hơn 3 tiếng.
+# Giữ nguyên: checkpoints/, models/, jobs/, batch_*, *_static
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cleanup-script
+  namespace: transit
+data:
+  cleanup.py: |
+    import os, logging
+    from datetime import datetime, timezone, timedelta
+    from pymongo import MongoClient
+    from minio import Minio
+    from minio.deleteobjects import DeleteObject
+    from minio.error import S3Error
+
+    logging.basicConfig(level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s")
+    log = logging.getLogger(__name__)
+
+    MONGO_URI      = os.getenv("MONGODB_URI",
+                       "mongodb://root:Transit@2024@mongodb.data.svc.cluster.local:27017")
+    MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT",
+                       "minio.data.svc.cluster.local:9000")
+    MINIO_BUCKET   = os.getenv("MINIO_BUCKET", "sg-transit-data")
+    MINIO_ACCESS   = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET   = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
+    KEEP_HOURS     = int(os.getenv("CLEANUP_KEEP_HOURS", "2"))
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=KEEP_HOURS)
+    log.info(f"=== Cleanup started — cutoff: {cutoff.isoformat()} ===")
+
+    # MongoDB: xóa speed views cũ
+    try:
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        db     = client["transit_db"]
+        total  = 0
+        for coll in ["speed_bus","speed_mrt","speed_carpark","speed_ev","speed_taxi"]:
+            try:
+                r = db[coll].delete_many({"ingested_at": {"$lt": cutoff}})
+                total += r.deleted_count
+                log.info(f"  MongoDB {coll}: {r.deleted_count} deleted")
+            except Exception as e:
+                log.warning(f"  MongoDB {coll}: skip ({e})")
+        log.info(f"MongoDB total: {total} deleted")
+        client.close()
+    except Exception as e:
+        log.error(f"MongoDB failed: {e}")
+
+    # MinIO: xóa raw Parquet files cũ
+    try:
+        ep = MINIO_ENDPOINT.replace("http://","").replace("https://","")
+        mc = Minio(ep, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=False)
+        total = 0
+        for prefix in ["raw/bus/","raw/mrt/","raw/carpark/","raw/ev/","raw/taxi/"]:
+            try:
+                to_del = [o.object_name for o in
+                          mc.list_objects(MINIO_BUCKET, prefix=prefix, recursive=True)
+                          if o.last_modified and o.last_modified < cutoff]
+                if not to_del:
+                    log.info(f"  MinIO {prefix}: nothing to delete")
+                    continue
+                errs = list(mc.remove_objects(MINIO_BUCKET,
+                            [DeleteObject(n) for n in to_del]))
+                deleted = len(to_del) - len(errs)
+                total  += deleted
+                log.info(f"  MinIO {prefix}: {deleted}/{len(to_del)} deleted")
+            except S3Error as e:
+                log.warning(f"  MinIO {prefix}: skip ({e})")
+        log.info(f"MinIO total: {total} files deleted")
+    except Exception as e:
+        log.error(f"MinIO failed: {e}")
+
+    log.info("=== Cleanup done ===")
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-cleanup
+  namespace: transit
+spec:
+  # Chạy đầu mỗi tiếng — ví dụ: 8:00, 9:00, 10:00...
+  # Nếu máy đang tắt lúc đó thì Kubernetes chạy bù khi bật lại
+  schedule: "0 * * * *"
+
+  # Không chạy 2 job cùng lúc nếu job trước chưa xong
+  concurrencyPolicy: Forbid
+
+  # Giữ lại log của 3 lần chạy gần nhất để debug
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+
+  jobTemplate:
+    spec:
+      # Tự xóa job sau 10 phút khi hoàn thành
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: cleanup
+            image: python:3.10-slim
+            command: ["sh", "-c"]
+            args:
+              - pip install pymongo minio --quiet --no-cache-dir
+                && python /scripts/cleanup.py
+            env:
+            - name: CLEANUP_KEEP_HOURS
+              value: "1"
+            - name: MONGODB_URI
+              valueFrom:
+                configMapKeyRef:
+                  name: transit-config
+                  key: MONGODB_URI
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: transit-config
+                  key: MINIO_ENDPOINT
+            - name: MINIO_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: transit-config
+                  key: MINIO_BUCKET
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: transit-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: transit-secrets
+                  key: MINIO_SECRET_KEY
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "100m"
+          volumes:
+          - name: script
+            configMap:
+              name: cleanup-script
+              items:
+              - key: cleanup.py
+                path: cleanup.py
