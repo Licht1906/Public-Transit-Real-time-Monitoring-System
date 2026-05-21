@@ -5,7 +5,10 @@ import time
 
 KEY    = os.getenv("LTA_API_KEY", "enter your key here")
 BASE   = "https://datamall2.mytransport.sg/ltaodataservice"
-HDRS   = {"AccountKey": KEY}
+HDRS   = {
+    "AccountKey": KEY,
+    "accept": "application/json",
+}
 client = pymongo.MongoClient(os.getenv("MONGODB_URI",
          "mongodb://root:Transit%402024@localhost:27017"))
 db     = client["transit_db"]
@@ -16,7 +19,23 @@ def fetch_all(endpoint):
         params = {"$skip": skip} if skip else {}
         r = requests.get(f"{BASE}/{endpoint}", headers=HDRS,
                          params=params, timeout=15)
-        data = r.json().get("value", [])
+        try:
+            r.raise_for_status()
+            payload = r.json()
+        except requests.HTTPError as exc:
+            preview = r.text[:300].strip()
+            raise RuntimeError(
+                f"LTA API HTTP {r.status_code} tại endpoint {endpoint}. "
+                f"Body preview: {preview}"
+            ) from exc
+        except requests.exceptions.JSONDecodeError as exc:
+            preview = r.text[:300].strip()
+            raise RuntimeError(
+                f"LTA API trả về non-JSON tại endpoint {endpoint}. "
+                f"Body preview: {preview}"
+            ) from exc
+
+        data = payload.get("value", [])
         if not data:
             break
         records.extend(data)

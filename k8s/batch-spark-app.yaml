@@ -1,0 +1,167 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: ScheduledSparkApplication
+metadata:
+  name: transit-batch
+  namespace: default
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  template:
+    type: Python
+    pythonVersion: "3"
+    mode: cluster
+    image: "apache/spark:3.5.0"
+    mainApplicationFile: "s3a://sg-transit-data/jobs/batch_job.py"
+    sparkVersion: "3.5.0"
+    restartPolicy:
+      type: OnFailure
+      onFailureRetries: 2
+    sparkConf:
+      spark.jars.ivy: "/tmp/.ivy2"
+      spark.hadoop.fs.s3a.endpoint: "http://minio.data.svc.cluster.local:9000"
+      spark.hadoop.fs.s3a.path.style.access: "true"
+      spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    deps:
+      packages:
+        - "org.mongodb.spark:mongo-spark-connector_2.12:10.6.1"
+        - "org.apache.hadoop:hadoop-aws:3.3.4"
+        - "com.amazonaws:aws-java-sdk-bundle:1.12.262"
+        - "graphframes:graphframes:0.8.3-spark3.5-s_2.12"
+    driver:
+      cores: 1
+      memory: "1g"
+      serviceAccount: spark-operator-spark
+      env:
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: transit-config
+              key: MINIO_ENDPOINT
+        - name: MINIO_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: transit-config
+              key: MINIO_BUCKET
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_SECRET_KEY
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MONGODB_URI
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_ACCESS_KEY
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_SECRET_KEY
+    executor:
+      cores: 1
+      instances: 2
+      memory: "1g"
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_ACCESS_KEY
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: transit-secrets
+              key: MINIO_SECRET_KEY
+
+---
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: transit-batch-manual
+  namespace: default
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: "apache/spark:3.5.0"
+  mainApplicationFile: "s3a://sg-transit-data/jobs/batch_job.py"
+  sparkVersion: "3.5.0"
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 2
+  sparkConf:
+    spark.jars.ivy: "/tmp/.ivy2"
+    spark.hadoop.fs.s3a.endpoint: "http://minio.data.svc.cluster.local:9000"
+    spark.hadoop.fs.s3a.path.style.access: "true"
+    spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+  deps:
+    packages:
+      - "org.mongodb.spark:mongo-spark-connector_2.12:10.6.1"
+      - "org.apache.hadoop:hadoop-aws:3.3.4"
+      - "com.amazonaws:aws-java-sdk-bundle:1.12.262"
+      - "graphframes:graphframes:0.8.3-spark3.5-s_2.12"
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark-operator-spark
+    env:
+      - name: MINIO_ENDPOINT
+        valueFrom:
+          configMapKeyRef:
+            name: transit-config
+            key: MINIO_ENDPOINT
+      - name: MINIO_BUCKET
+        valueFrom:
+          configMapKeyRef:
+            name: transit-config
+            key: MINIO_BUCKET
+      - name: MINIO_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_ACCESS_KEY
+      - name: MINIO_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_SECRET_KEY
+      - name: MONGODB_URI
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MONGODB_URI
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_ACCESS_KEY
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_SECRET_KEY
+  executor:
+    cores: 1
+    instances: 2
+    memory: "1g"
+    env:
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_ACCESS_KEY
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: transit-secrets
+            key: MINIO_SECRET_KEY
