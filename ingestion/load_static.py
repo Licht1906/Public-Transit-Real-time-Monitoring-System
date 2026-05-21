@@ -1,21 +1,16 @@
-"""
-load_static.py — Tải Bus Stops, Bus Routes, Bus Services từ LTA vào MongoDB
-Chạy 1 lần duy nhất. Data này ít thay đổi.
-"""
+import requests
+import pymongo
 import os
 import time
 
-import pymongo
-import requests
-
-KEY    = os.getenv("LTA_API_KEY", "your_key")
+KEY    = os.getenv("LTA_API_KEY", "enter your key here")
 BASE   = "https://datamall2.mytransport.sg/ltaodataservice"
 HDRS   = {
     "AccountKey": KEY,
     "accept": "application/json",
 }
 client = pymongo.MongoClient(os.getenv("MONGODB_URI",
-         "mongodb://root:Transit%402024@localhost:27017/transit_db?authSource=admin"))
+         "mongodb://root:Transit%402024@localhost:27017"))
 db     = client["transit_db"]
 
 def fetch_all(endpoint):

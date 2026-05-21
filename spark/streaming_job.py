@@ -10,7 +10,7 @@ from pyspark.sql.types import (
 KAFKA_BOOT     = os.getenv("KAFKA_BOOTSTRAP",
                    "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092")
 MONGO_URI      = os.getenv("MONGODB_URI",
-                   "mongodb://root:Transit@2024@mongodb.data.svc.cluster.local:27017")
+                   "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT",
                    "http://minio.data.svc.cluster.local:9000")
 MINIO_BUCKET   = os.getenv("MINIO_BUCKET", "sg-transit-data")

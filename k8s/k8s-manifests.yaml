@@ -6,7 +6,7 @@ metadata:
   namespace: transit
 data:
   KAFKA_BOOTSTRAP:    "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
-  MONGODB_URI:        "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017/transit_db?authSource=admin"
+  MONGODB_URI:        "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017"
   REDIS_HOST:         "redis-master.data.svc.cluster.local"
 
   # MinIO thay GCS — địa chỉ nội bộ trong cluster
@@ -94,6 +94,13 @@ spec:
             name: transit-secrets
         ports:
         - containerPort: 8000
+        volumeMounts:
+        - name: script-vol
+          mountPath: /main.py
+          subPath: main.py
+        - name: static-vol
+          mountPath: /static/index.html
+          subPath: index.html
         resources:
           requests:
             memory: "256Mi"
@@ -101,6 +108,19 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "300m"
+      volumes:
+      - name: script-vol
+        configMap:
+          name: api-script
+          items:
+          - key: main.py
+            path: main.py
+      - name: static-vol
+        configMap:
+          name: api-script
+          items:
+          - key: index.html
+            path: index.html
 
 ---
 # Service — expose FastAPI (NodePort cho Minikube)
