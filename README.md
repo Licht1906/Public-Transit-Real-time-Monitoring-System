@@ -119,6 +119,37 @@ kubectl apply -f k8s/k8s-secrets.yaml
 kubectl apply -f k8s/k8s-manifests.yaml
 ```
 
+### Bước 8: Deploy Batch Layer (Spark)
+
+Batch Layer xử lý dữ liệu lịch sử hàng ngày (Window functions, Pivot) và huấn luyện mô hình ML (GraphFrames, GBT Regressor).
+
+1. Upload script Spark lên thư mục jobs của MinIO:
+```bash
+# Mở port-forward cho MinIO API (nếu chưa mở)
+kubectl port-forward svc/minio 9000:9000 -n data &
+
+# Dùng MinIO client để upload
+mc cp spark/batch_job.py local/sg-transit-data/jobs/
+```
+
+2. Tạo dữ liệu mẫu để test luồng (Tuỳ chọn):
+```bash
+# Đảm bảo đã port-forward MinIO trước khi chạy script
+python spark/create_test_data.py
+```
+
+3. Triển khai cấu hình ScheduledSparkApplication (CronJob tự động chạy lúc 2h sáng):
+```bash
+kubectl apply -f k8s/batch-spark-app.yaml
+```
+
+4. Kích hoạt chạy thử (Manual run) không chờ lịch:
+```bash
+kubectl create job batch-test --from=scheduledsparkapplication/transit-batch -n default
+# Theo dõi log của job
+kubectl logs -f job/batch-test -n default
+```
+
 ---
 
 ## 🌐 Cách truy cập các dịch vụ
