@@ -8,6 +8,7 @@ data:
   KAFKA_BOOTSTRAP:    "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
   MONGODB_URI:        "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017"
   REDIS_HOST:         "redis-master.data.svc.cluster.local"
+  REDIS_PASSWORD:     "Redis@2024"
 
   # MinIO thay GCS — địa chỉ nội bộ trong cluster
   MINIO_ENDPOINT:     "http://minio.data.svc.cluster.local:9000"
@@ -101,6 +102,12 @@ spec:
         - name: static-vol
           mountPath: /static/index.html
           subPath: index.html
+        - name: static-vol
+          mountPath: /static/mrt_lines.geojson
+          subPath: mrt_lines.geojson
+        - name: static-vol
+          mountPath: /static/mrt_stations.json
+          subPath: mrt_stations.json
         resources:
           requests:
             memory: "256Mi"
@@ -121,6 +128,10 @@ spec:
           items:
           - key: index.html
             path: index.html
+          - key: mrt_lines.geojson
+            path: mrt_lines.geojson
+          - key: mrt_stations.json
+            path: mrt_stations.json
 
 ---
 # Service — expose FastAPI (NodePort cho Minikube)
