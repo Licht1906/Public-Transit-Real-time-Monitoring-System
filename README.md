@@ -108,9 +108,11 @@ helm install grafana grafana/grafana --namespace monitoring --set adminPassword=
 
 ### Bước 7: Cấu hình Secret & Deploy Ứng dụng
 1. Bạn cần chuẩn bị API Key của LTA DataMall.
-2. Sửa file `k8s/k8s-secrets.yaml` (hoặc tạo từ file mẫu `.env.example`) và điền API Key vào mục `LTA_API_KEY`.
+2. Tạo file secret thật từ mẫu rồi điền API Key vào mục `LTA_API_KEY`.
 3. Apply ConfigMap, Secret và code Python:
 ```bash
+cp k8s/k8s-secrets.example.yaml k8s/k8s-secrets.yaml
+
 # Tạo ConfigMap cho code ingestor
 kubectl create configmap ingestor-script --from-file=ingestor.py=ingestion/ingestor.py -n transit
 
@@ -132,9 +134,10 @@ kubectl port-forward svc/minio 9000:9000 -n data &
 mc cp spark/batch_job.py local/sg-transit-data/jobs/
 ```
 
-2. Tạo dữ liệu mẫu để test luồng (Tuỳ chọn):
+2. Tạo dữ liệu mẫu Parquet để test luồng (tuỳ chọn, dùng khi chưa có raw history):
 ```bash
 # Đảm bảo đã port-forward MinIO trước khi chạy script
+pip install -r requirements.txt
 python spark/create_test_data.py
 ```
 
@@ -161,6 +164,44 @@ Sau khi tất cả các Pod đã ở trạng thái `Running` (kiểm tra bằng 
     kubectl port-forward svc/transit-api 8000:8000 -n transit
     ```
     Truy cập tại: `http://localhost:8000`
+
+### Member E Serving Layer
+
+Create/update the API ConfigMap before restarting `transit-api`:
+
+```bash
+kubectl create configmap api-script \
+  --from-file=main.py=api/main.py \
+  --from-file=index.html=api/static/index.html \
+  --from-file=mrt_lines.geojson=api/static/mrt_lines.geojson \
+  --from-file=mrt_stations.json=api/static/mrt_stations.json \
+  -n transit --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/transit-api -n transit
+kubectl port-forward svc/transit-api 8000:8000 -n transit
+```
+
+Smoke-test endpoints:
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/bus/stops
+curl http://localhost:8000/bus/arrivals/83139
+curl http://localhost:8000/mrt/crowd/NSL
+curl "http://localhost:8000/carpark?agency=HDB&min_lots=20"
+curl "http://localhost:8000/ev/stations?lat=1.3521&lng=103.8198&radius_km=2"
+curl http://localhost:8000/taxi/positions
+```
+
+Import `grafana/transit_dashboard.json` into Grafana and point the JSON datasource to the FastAPI base URL.
+
+### Tài liệu Member E
+
+- Serving layer và web app: `api/main.py`, `api/static/index.html`
+- Grafana dashboard: `grafana/transit_dashboard.json`
+- Secret mẫu: `k8s/k8s-secrets.example.yaml`
+- Báo cáo kỹ thuật: `docs/member_e_technical_report.md`
+- Checklist demo: chạy các smoke-test endpoints ở trên và kiểm tra `source: cache` cho lần gọi Bus ETA thứ hai trong vòng 20 giây.
 *   **MinIO Console (Web UI):**
     ```bash
     kubectl port-forward svc/minio 9001:9001 -n data

@@ -1,0 +1,9 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+requests==2.32.3
+kafka-python==2.0.2
+pymongo==4.12.1
+redis==5.2.1
+httpx==0.28.1
+minio==7.2.15
+pyarrow==20.0.0
