@@ -1,8 +1,3 @@
-"""
-ingestor.py — LTA DataMall Ingestor
-Poll 6 API nguồn, đẩy vào 6 Kafka topics.
-"""
-
 import requests
 import json
 import time
@@ -20,7 +15,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-LTA_KEY    = os.getenv("LTA_API_KEY", "e825ByV2QYWgz/NY8/B2Bw==")
+LTA_KEY    = os.getenv("LTA_API_KEY", "enter your key here")
 KAFKA_BOOT = os.getenv("KAFKA_BOOTSTRAP","kafka:9092")
 BASE       = "https://datamall2.mytransport.sg/ltaodataservice"
 HEADERS    = {"AccountKey": LTA_KEY, "accept": "application/json"}

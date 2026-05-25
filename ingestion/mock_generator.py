@@ -1,8 +1,3 @@
-"""
-Mock data cho Member C test Spark Streaming.
-Không cần LTA API key thật, không cần Kafka thật trên GKE.
-Chỉ cần Docker Kafka local của Member C.
-"""
 import json, time, random
 from datetime import datetime, timezone, timedelta
 from kafka import KafkaProducer

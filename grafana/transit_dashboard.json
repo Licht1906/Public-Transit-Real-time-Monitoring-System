@@ -1,0 +1,39 @@
+{
+  "title": "Singapore Transit Admin Dashboard",
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Bus ETA time series",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [{"refId": "A", "urlPath": "/bus/speed_bus"}]
+    },
+    {
+      "type": "heatmap",
+      "title": "MRT crowd heatmap",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [{"refId": "A", "urlPath": "/mrt/crowd/NSL"}]
+    },
+    {
+      "type": "barchart",
+      "title": "Carpark availability",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [{"refId": "A", "urlPath": "/carpark"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Taxi count time series",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [{"refId": "A", "urlPath": "/taxi/speed_taxi"}]
+    },
+    {
+      "type": "heatmap",
+      "title": "Bus ETA by hour",
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8},
+      "targets": [{"refId": "A", "urlPath": "/batch/hourly_pivot"}]
+    }
+  ]
+}

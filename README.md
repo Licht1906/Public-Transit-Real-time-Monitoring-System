@@ -194,6 +194,38 @@ kubectl apply -f k8s/cleanup-cronjob.yaml
 > * Bạn có thể theo dõi tiến độ tải bằng lệnh: `kubectl logs transit-streaming-driver -n default -f`.
 > * Sau khi Spark Driver log ra dòng `All streaming queries running...`, dữ liệu sẽ được cập nhật thành công lên Bản đồ giám sát.
 
+### Bước 8: Deploy Batch Layer (Spark)
+
+Batch Layer xử lý dữ liệu lịch sử hàng ngày (Window functions, Pivot) và huấn luyện mô hình ML (GraphFrames, GBT Regressor).
+
+1. Upload script Spark lên thư mục jobs của MinIO:
+```bash
+# Mở port-forward cho MinIO API (nếu chưa mở)
+kubectl port-forward svc/minio 9000:9000 -n data &
+
+# Dùng MinIO client để upload
+mc cp spark/batch_job.py local/sg-transit-data/jobs/
+```
+
+2. Tạo dữ liệu mẫu Parquet để test luồng (tuỳ chọn, dùng khi chưa có raw history):
+```bash
+# Đảm bảo đã port-forward MinIO trước khi chạy script
+pip install -r requirements.txt
+python spark/create_test_data.py
+```
+
+3. Triển khai cấu hình ScheduledSparkApplication (CronJob tự động chạy lúc 2h sáng):
+```bash
+kubectl apply -f k8s/batch-spark-app.yaml
+```
+
+4. Kích hoạt chạy thử (Manual run) không chờ lịch:
+```bash
+kubectl create job batch-test --from=scheduledsparkapplication/transit-batch -n default
+# Theo dõi log của job
+kubectl logs -f job/batch-test -n default
+```
+
 ---
 
 

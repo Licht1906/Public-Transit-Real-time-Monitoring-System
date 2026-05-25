@@ -1,6 +1,4 @@
 """
-FastAPI Serving Layer — Thành viên E
-
 3 loại data source:
 1. MongoDB bus_stops_static → GET /bus/stops (5,000 trạm, 1 lần)
 2. LTA API trực tiếp (on-demand) → GET /bus/arrivals/{code} (khi user click)
