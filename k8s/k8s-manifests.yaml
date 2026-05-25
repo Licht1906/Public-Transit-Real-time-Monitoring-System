@@ -1,0 +1,150 @@
+# ConfigMap — cấu hình chung, toàn nhóm dùng chung
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transit-config
+  namespace: transit
+data:
+  KAFKA_BOOTSTRAP:    "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  MONGODB_URI:        "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017"
+  REDIS_HOST:         "redis-master.data.svc.cluster.local"
+  REDIS_PASSWORD:     "Redis@2024"
+
+  # MinIO thay GCS — địa chỉ nội bộ trong cluster
+  MINIO_ENDPOINT:     "http://minio.data.svc.cluster.local:9000"
+  MINIO_BUCKET:       "sg-transit-data"
+
+  LTA_BASE_URL:       "https://datamall2.mytransport.sg/ltaodataservice"
+  POLL_BUS_SECONDS:     "30"
+  POLL_MRT_SECONDS:     "600"
+  POLL_CARPARK_SECONDS: "60"
+  POLL_EV_SECONDS:      "300"
+  POLL_TAXI_SECONDS:    "60"
+
+
+---
+# Deployment — LTA Ingestor (Thành viên B)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lta-ingestor
+  namespace: transit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lta-ingestor
+  template:
+    metadata:
+      labels:
+        app: lta-ingestor
+    spec:
+      containers:
+      - name: ingestor
+        image: python:3.10-slim
+        command: ["sh", "-c"]
+        args:
+          - pip install requests kafka-python pymongo redis && python /app/ingestor.py
+        envFrom:
+        - configMapRef:
+            name: transit-config
+        - secretRef:
+            name: transit-secrets
+        volumeMounts:
+        - name: script
+          mountPath: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+      volumes:
+      - name: script
+        configMap:
+          name: ingestor-script
+
+---
+# Deployment — FastAPI (Thành viên E)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transit-api
+  namespace: transit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transit-api
+  template:
+    metadata:
+      labels:
+        app: transit-api
+    spec:
+      containers:
+      - name: api
+        image: python:3.10-slim
+        command: ["sh", "-c"]
+        args:
+          - pip install fastapi uvicorn pymongo redis httpx && uvicorn main:app --host 0.0.0.0 --port 8000
+        envFrom:
+        - configMapRef:
+            name: transit-config
+        - secretRef:
+            name: transit-secrets
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: script-vol
+          mountPath: /main.py
+          subPath: main.py
+        - name: static-vol
+          mountPath: /static/index.html
+          subPath: index.html
+        - name: static-vol
+          mountPath: /static/mrt_lines.geojson
+          subPath: mrt_lines.geojson
+        - name: static-vol
+          mountPath: /static/mrt_stations.json
+          subPath: mrt_stations.json
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+      volumes:
+      - name: script-vol
+        configMap:
+          name: api-script
+          items:
+          - key: main.py
+            path: main.py
+      - name: static-vol
+        configMap:
+          name: api-script
+          items:
+          - key: index.html
+            path: index.html
+          - key: mrt_lines.geojson
+            path: mrt_lines.geojson
+          - key: mrt_stations.json
+            path: mrt_stations.json
+
+---
+# Service — expose FastAPI (NodePort cho Minikube)
+apiVersion: v1
+kind: Service
+metadata:
+  name: transit-api
+  namespace: transit
+spec:
+  selector:
+    app: transit-api
+  ports:
+  - port: 8000
+    targetPort: 8000
+    nodePort: 30800
+  type: NodePort

@@ -1,0 +1,1556 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SG Transit Monitor</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Display:wght@400;500;700&family=Roboto+Mono:wght@500&display=swap" rel="stylesheet">
+  <!-- Fallback nếu Google Sans không load -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Mono:wght@500&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #f1f3f4;
+      --surface: #ffffff;
+      --surface2: #f8f9fa;
+      --surface3: #f1f3f4;
+      --border: #dadce0;
+      --border-light: #e8eaed;
+      --text: #202124;
+      --text2: #3c4043;
+      --text3: #5f6368;
+      --text4: #80868b;
+      --accent: #1a73e8;
+      --accent-dark: #1557b0;
+      --accent-light: #e8f0fe;
+      --accent-mid: #d2e3fc;
+      --green: #188038;
+      --green-bg: #e6f4ea;
+      --amber: #b06000;
+      --amber-bg: #fef7e0;
+      --red: #c5221f;
+      --red-bg: #fce8e6;
+      --panel-w: 360px;
+      --topbar-h: 52px;
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 16px;
+      --radius-xl: 28px;
+      --shadow-1: 0 1px 2px rgba(60,64,67,.3), 0 1px 3px 1px rgba(60,64,67,.15);
+      --shadow-2: 0 1px 2px rgba(60,64,67,.3), 0 2px 6px 2px rgba(60,64,67,.15);
+      --shadow-3: 0 4px 8px 3px rgba(60,64,67,.15), 0 1px 3px rgba(60,64,67,.3);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Noto Sans', 'Google Sans', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── LAYOUT ─── */
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .workspace {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ─── TOPBAR ─── */
+    .topbar {
+      height: var(--topbar-h);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      padding: 0 16px 0 20px;
+      border-bottom: 1px solid var(--border);
+      z-index: 200;
+      flex-shrink: 0;
+      gap: 0;
+    }
+
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .brand-mark svg {
+      width: 20px;
+      height: 20px;
+      fill: white;
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.1;
+    }
+
+    .brand-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.1px;
+    }
+
+    .brand-sub {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--text4);
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    .topbar-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      margin: 0 16px;
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--green);
+      background: var(--green-bg);
+      padding: 4px 10px;
+      border-radius: 100px;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--green);
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: livePulse 2s ease-in-out infinite;
+    }
+
+    @keyframes livePulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.75); }
+    }
+
+    .topbar-spacer { flex: 1; }
+
+    .topbar-source {
+      font-size: 11px;
+      color: var(--text4);
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .topbar-source span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* ─── LEFT PANEL ─── */
+    .panel {
+      width: var(--panel-w);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      z-index: 50;
+      flex-shrink: 0;
+    }
+
+    /* ─── NAV TABS ─── */
+    .nav {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 0;
+      padding: 0 2px;
+    }
+
+    .nav::-webkit-scrollbar { display: none; }
+
+    .nav-tab {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 7px;
+      padding: 0 14px;
+      height: 46px;
+      cursor: pointer;
+      color: var(--text3);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.1px;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      transition: color 0.15s, background 0.15s;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .nav-tab:hover {
+      color: var(--accent);
+      background: var(--accent-light);
+    }
+
+    .nav-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .tab-icon {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      opacity: 0.75;
+    }
+
+    .nav-tab.active .tab-icon { opacity: 1; }
+
+    .tab-icon svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    .tab-label {
+      font-size: 13px;
+      font-weight: inherit;
+      letter-spacing: 0.1px;
+    }
+
+    /* ─── PANEL BODY ─── */
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .panel-body::-webkit-scrollbar { width: 4px; }
+    .panel-body::-webkit-scrollbar-track { background: transparent; }
+    .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ─── SECTION LABEL ─── */
+    .section-label {
+      padding: 14px 16px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--text4);
+    }
+
+    /* ─── CONTROLS STRIP ─── */
+    .controls-strip {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+      background: var(--surface);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ctrl-select, .ctrl-input {
+      flex: 1;
+      min-width: 90px;
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--surface);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      appearance: auto;
+    }
+
+    .ctrl-select:focus, .ctrl-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(26,115,232,.18);
+    }
+
+    /* Filled primary button — Google Maps style */
+    .btn-filled {
+      height: 36px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: var(--radius-xl);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.15s, box-shadow 0.15s;
+      white-space: nowrap;
+      letter-spacing: 0.1px;
+      flex-shrink: 0;
+    }
+
+    .btn-filled:hover {
+      background: var(--accent-dark);
+      box-shadow: var(--shadow-1);
+    }
+
+    .btn-filled:active { transform: scale(0.97); }
+
+    /* Outlined secondary button */
+    .btn-outlined {
+      height: 36px;
+      padding: 0 14px;
+      background: var(--surface);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .btn-outlined:hover {
+      background: var(--accent-light);
+      border-color: var(--accent-mid);
+    }
+
+    .btn-outlined:active { transform: scale(0.97); }
+
+    /* Tonal icon button */
+    .btn-tonal {
+      height: 36px;
+      min-width: 36px;
+      padding: 0 12px;
+      background: var(--accent-light);
+      color: var(--accent);
+      border: none;
+      border-radius: var(--radius-xl);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: background 0.15s;
+    }
+
+    .btn-tonal:hover { background: var(--accent-mid); }
+
+    /* ─── MAP AREA ─── */
+    .map-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .map-full {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ─── CARD LIST ─── */
+    .card-list {
+      padding: 6px 10px 12px;
+    }
+
+    .result-meta {
+      font-size: 12px;
+      color: var(--text4);
+      padding: 8px 6px 6px;
+      font-weight: 500;
+    }
+
+    .item-card {
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius);
+      padding: 11px 13px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: box-shadow 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .item-card:hover {
+      background: var(--surface2);
+      border-color: var(--border);
+      box-shadow: var(--shadow-1);
+    }
+
+    .item-card.crowd-low  { border-left: 3px solid var(--green); }
+    .item-card.crowd-medium { border-left: 3px solid #f9ab00; }
+    .item-card.crowd-high { border-left: 3px solid var(--red); }
+    .item-card.crowd-unknown { border-left: 3px solid var(--border); }
+
+    .card-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-meta {
+      font-size: 12px;
+      color: var(--text3);
+      margin-top: 3px;
+    }
+
+    /* ─── CHIPS / BADGES ─── */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 9px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+      letter-spacing: 0.1px;
+    }
+
+    .chip-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .chip-low    { background: var(--green-bg);  color: var(--green); }
+    .chip-medium { background: var(--amber-bg);  color: var(--amber); }
+    .chip-high   { background: var(--red-bg);    color: var(--red); }
+    .chip-free   { background: var(--accent-light); color: var(--accent); }
+    .chip-full   { background: #fce4ec; color: #880e4f; }
+    .chip-busy   { background: var(--amber-bg);  color: var(--amber); }
+    .chip-unknown{ background: var(--surface3);  color: var(--text3); }
+
+    /* ─── BUS STOP PANEL ─── */
+    .bus-info-panel {
+      padding: 10px;
+    }
+
+    .stop-card {
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border-light);
+    }
+
+    .stop-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--accent);
+      color: white;
+    }
+
+    .stop-header-icon {
+      width: 32px;
+      height: 32px;
+      background: rgba(255,255,255,.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .stop-header-text { flex: 1; }
+
+    .stop-name {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .stop-sub {
+      font-size: 11.5px;
+      opacity: 0.85;
+      margin-top: 2px;
+    }
+
+    .stop-body {
+      border-top: none;
+    }
+
+    /* ─── ETA ROWS ─── */
+    .eta-row {
+      display: flex;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-light);
+      gap: 10px;
+      transition: background 0.12s;
+    }
+
+    .eta-row:last-child { border-bottom: none; }
+    .eta-row:hover { background: var(--surface2); }
+
+    .svc-chip {
+      background: var(--accent);
+      color: white;
+      font-family: 'Noto Sans Mono', 'Roboto Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 9px;
+      border-radius: 6px;
+      min-width: 44px;
+      text-align: center;
+      letter-spacing: 0.3px;
+      flex-shrink: 0;
+    }
+
+    .eta-info {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .eta-time-group {
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .eta-time-big {
+      font-family: 'Noto Sans Mono', 'Roboto Mono', monospace;
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .eta-unit {
+      font-size: 10px;
+      color: var(--text4);
+      margin-top: 2px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .eta-next {
+      font-size: 11px;
+      color: var(--text4);
+    }
+
+    /* ─── TAXI STAT ─── */
+    .taxi-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .stat-big {
+      font-family: 'Noto Sans Mono', 'Roboto Mono', monospace;
+      font-size: 40px;
+      font-weight: 600;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text3);
+      font-weight: 500;
+    }
+
+    .stat-update {
+      font-size: 11.5px;
+      color: var(--text4);
+      margin-top: 6px;
+    }
+
+    .stat-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ─── ALERT ─── */
+    .alert-bar {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      background: var(--red-bg);
+      border-left: 4px solid var(--red);
+      padding: 10px 14px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: #731f1f;
+      margin: 8px 10px 0;
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    /* ─── STATES (loading, empty, error) ─── */
+    .state-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 40px 24px;
+      color: var(--text4);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .state-icon { font-size: 30px; line-height: 1; }
+    .state-title { font-weight: 600; color: var(--text3); font-size: 14px; }
+    .state-sub { font-size: 12.5px; color: var(--text4); line-height: 1.5; }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-bar {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      background: var(--red-bg);
+      border-left: 3px solid var(--red);
+      color: #731f1f;
+      padding: 10px 14px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 13px;
+      margin: 8px 10px;
+    }
+
+    /* ─── MAP FAB ─── */
+    .map-fab {
+      position: absolute;
+      bottom: 20px;
+      right: 16px;
+      z-index: 400;
+      background: var(--surface);
+      border: none;
+      border-radius: 50%;
+      width: 48px;
+      height: 48px;
+      box-shadow: var(--shadow-2);
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, box-shadow 0.15s;
+      color: var(--text2);
+    }
+
+    .map-fab:hover {
+      box-shadow: var(--shadow-3);
+      transform: scale(1.05);
+    }
+
+    /* ─── MAP HINT PILL ─── */
+    .hint-pill {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 400;
+      background: var(--surface);
+      color: var(--text2);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 7px 16px;
+      border-radius: 100px;
+      pointer-events: none;
+      box-shadow: var(--shadow-2);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hint-pill::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+
+    /* ─── LEAFLET OVERRIDES ─── */
+    .leaflet-popup-content-wrapper {
+      border-radius: var(--radius) !important;
+      box-shadow: var(--shadow-2) !important;
+      font-family: 'Noto Sans', 'Google Sans', sans-serif !important;
+      font-size: 13px !important;
+      color: var(--text) !important;
+    }
+
+    .leaflet-popup-tip { display: none; }
+
+    .leaflet-popup-content {
+      margin: 12px 16px !important;
+      line-height: 1.5 !important;
+    }
+
+    .leaflet-control-zoom {
+      border: none !important;
+      box-shadow: var(--shadow-2) !important;
+    }
+
+    .leaflet-control-zoom a {
+      border-radius: var(--radius-sm) !important;
+      color: var(--text2) !important;
+      font-weight: 700 !important;
+    }
+
+    /* ─── SEPARATOR ─── */
+    .separator {
+      height: 1px;
+      background: var(--border-light);
+      margin: 0 12px;
+    }
+
+    /* ─── CHIP STRIP (MRT line selector) ─── */
+    .chip-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .line-chip {
+      padding: 4px 12px;
+      border-radius: 100px;
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.15s;
+      opacity: 0.6;
+      letter-spacing: 0.2px;
+    }
+
+    .line-chip.selected { opacity: 1; border-color: rgba(0,0,0,.2); }
+
+    .lc-ns  { background: #ffe8e8; color: #b51010; }
+    .lc-ew  { background: #e6f4ea; color: #1a7a38; }
+    .lc-ne  { background: #f3e0f7; color: #6b1a7c; }
+    .lc-cc  { background: #fef4e0; color: #a06200; }
+    .lc-dt  { background: #e0edf7; color: #00509a; }
+    .lc-te  { background: #f5ede0; color: #7a4a20; }
+
+    /* ─── FOOTER HINT ─── */
+    .panel-footer {
+      font-size: 11px;
+      color: var(--text4);
+      padding: 7px 14px 8px;
+      text-align: right;
+      border-top: 1px solid var(--border-light);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-mark">
+        <!-- Transit icon -->
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 4.17 4.42 9.92 6.24 12.11.4.48 1.13.48 1.53 0C14.58 18.92 19 13.17 19 9c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">SG Transit</span>
+        <span class="brand-sub">Monitor</span>
+      </div>
+    </div>
+
+    <div class="topbar-divider"></div>
+
+    <div class="live-indicator">
+      <span class="live-dot"></span>
+      Live data
+    </div>
+
+    <div class="topbar-spacer"></div>
+
+    <div class="topbar-source">Nguồn: <span>LTA DataMall</span></div>
+  </div>
+
+  <!-- WORKSPACE -->
+  <div class="workspace">
+
+    <!-- LEFT PANEL -->
+    <div class="panel">
+
+      <!-- NAV -->
+      <div class="nav">
+        <div class="nav-tab active" onclick="switchTab('bus')" title="Bus arrivals">
+          <div class="tab-icon">
+            <!-- Bus icon -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"/></svg>
+          </div>
+          <span class="tab-label">Bus</span>
+        </div>
+        <div class="nav-tab" onclick="switchTab('mrt')" title="MRT status">
+          <div class="tab-icon">
+            <!-- Subway/Train icon -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2.23l2-2H14l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-3.58-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V6h5v4zm5.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-7h-5V6h5v4z"/></svg>
+          </div>
+          <span class="tab-label">MRT</span>
+        </div>
+        <div class="nav-tab" onclick="switchTab('carpark')" title="Carpark lots">
+          <div class="tab-icon">
+            <!-- Local parking icon -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M13 3H6v18h4v-6h3c3.31 0 6-2.69 6-6s-2.69-6-6-6zm.2 8H10V7h3.2c1.1 0 2 .9 2 2s-.9 2-2 2z"/></svg>
+          </div>
+          <span class="tab-label">Carpark</span>
+        </div>
+        <div class="nav-tab" onclick="switchTab('ev')" title="EV charging">
+          <div class="tab-icon">
+            <!-- EV station / bolt icon -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M14.69 2.21L4.33 11.49c-.64.58-.28 1.65.58 1.73L13 14l-4.85 6.76c-.22.31-.19.74.08 1.01.3.3.77.31 1.08.02l10.36-9.28c.64-.58.28-1.65-.58-1.73L11 10l4.85-6.76c.22-.31.19-.74-.08-1.01-.3-.3-.77-.31-1.08-.02z"/></svg>
+          </div>
+          <span class="tab-label">EV Charging</span>
+        </div>
+        <div class="nav-tab" onclick="switchTab('taxi')" title="Taxi availability">
+          <div class="tab-icon">
+            <!-- Local taxi icon -->
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5H15V3H9v2H6.5c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zm-2.5-1c.83 0 1.5-.67 1.5-1.5S17.33 13 16.5 13s-1.5.67-1.5 1.5.67 1.5 1.5 1.5zm-9 0c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>
+          </div>
+          <span class="tab-label">Taxi</span>
+        </div>
+      </div>
+
+      <!-- PANEL BODY -->
+      <div class="panel-body">
+
+        <!-- ─── BUS TAB ─── -->
+        <div id="tab-bus" class="tab-content active">
+          <div id="bus-info" class="bus-info-panel">
+            <div class="state-box">
+              <div class="spinner"></div>
+              <div class="state-title">Đang tải trạm bus</div>
+              <div class="state-sub">5 000+ trạm trên toàn Singapore…</div>
+            </div>
+          </div>
+          <div class="separator"></div>
+          <div class="section-label">Top 10 trạm trọng điểm</div>
+          <div id="pagerank-list" class="card-list">
+            <div class="state-box">
+              <div class="spinner"></div>
+              <div class="state-sub">Phân tích đồ thị mạng bus…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── MRT TAB ─── -->
+        <div id="tab-mrt" class="tab-content">
+          <div class="chip-strip">
+            <span class="line-chip lc-ns selected" onclick="selectLine(this,'NSL')">NSL</span>
+            <span class="line-chip lc-ew" onclick="selectLine(this,'EWL')">EWL</span>
+            <span class="line-chip lc-ne" onclick="selectLine(this,'NEL')">NEL</span>
+            <span class="line-chip lc-cc" onclick="selectLine(this,'CCL')">CCL</span>
+            <span class="line-chip lc-dt" onclick="selectLine(this,'DTL')">DTL</span>
+            <span class="line-chip lc-te" onclick="selectLine(this,'TEL')">TEL</span>
+            <button class="btn-tonal" onclick="loadMRT()" style="margin-left:auto;height:28px;padding:0 10px;font-size:11.5px;">↻ Refresh</button>
+          </div>
+          <!-- hidden select for JS compat -->
+          <select id="mrt-line" style="display:none">
+            <option value="NSL">NSL</option>
+            <option value="EWL">EWL</option>
+            <option value="NEL">NEL</option>
+            <option value="CCL">CCL</option>
+            <option value="DTL">DTL</option>
+            <option value="TEL">TEL</option>
+          </select>
+          <div id="mrt-alert"></div>
+          <div id="mrt-result" class="card-list"></div>
+        </div>
+
+        <!-- ─── CARPARK TAB ─── -->
+        <div id="tab-carpark" class="tab-content">
+          <div class="controls-strip">
+            <select id="cp-agency" class="ctrl-select">
+              <option value="">Tất cả cơ quan</option>
+              <option value="HDB">HDB</option>
+              <option value="LTA">LTA</option>
+              <option value="URA">URA</option>
+            </select>
+            <input type="number" id="cp-min-lots" class="ctrl-input" placeholder="Tối thiểu (chỗ)" value="1" min="0" style="max-width:130px">
+            <button class="btn-filled" onclick="loadCarpark()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              Tìm kiếm
+            </button>
+          </div>
+          <div id="cp-result" class="card-list"></div>
+        </div>
+
+        <!-- ─── EV TAB ─── -->
+        <div id="tab-ev" class="tab-content">
+          <div class="controls-strip" style="flex-direction:column;gap:8px">
+            <div style="display:flex;gap:8px">
+              <input type="number" id="ev-lat" class="ctrl-input" placeholder="Vĩ độ" value="1.3521" step="0.0001">
+              <input type="number" id="ev-lng" class="ctrl-input" placeholder="Kinh độ" value="103.8198" step="0.0001">
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="number" id="ev-radius" class="ctrl-input" placeholder="Bán kính (km)" value="3" min="1" max="20" style="max-width:130px">
+              <button class="btn-filled" onclick="loadEV()">Tìm</button>
+              <button class="btn-outlined" onclick="useMyLocation()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>
+                Vị trí tôi
+              </button>
+            </div>
+          </div>
+          <div id="ev-result" class="card-list"></div>
+        </div>
+
+        <!-- ─── TAXI TAB ─── -->
+        <div id="tab-taxi" class="tab-content">
+          <div class="taxi-header">
+            <div class="stat-row">
+              <span class="stat-big" id="taxi-count">—</span>
+              <span class="stat-label">taxi rảnh</span>
+            </div>
+            <div class="stat-update">Cập nhật lúc <span id="taxi-update">—</span></div>
+            <div class="stat-actions">
+              <button class="btn-outlined" onclick="loadTaxi()">↻ Làm mới</button>
+            </div>
+          </div>
+          <div class="state-box" style="padding:28px 24px">
+            <div class="state-icon">🚕</div>
+            <div class="state-title">Phân bố taxi thời gian thực</div>
+            <div class="state-sub">Mỗi vòng tròn trên bản đồ là một cụm taxi. Kích thước = số lượng.</div>
+          </div>
+        </div>
+
+      </div><!-- /panel-body -->
+
+      <div class="panel-footer" id="panel-footer-hint">Nhấn vào trạm trên bản đồ để xem ETA</div>
+    </div><!-- /panel -->
+
+    <!-- MAP AREA -->
+    <div class="map-wrap">
+      <div id="bus-map"   class="map-full" style="position:absolute;inset:0;z-index:1;"></div>
+      <div id="mrt-map"   class="map-full" style="position:absolute;inset:0;z-index:1;display:none"></div>
+      <div id="cp-map"    class="map-full" style="position:absolute;inset:0;z-index:1;display:none"></div>
+      <div id="ev-map"    class="map-full" style="position:absolute;inset:0;z-index:1;display:none"></div>
+      <div id="taxi-map"  class="map-full" style="position:absolute;inset:0;z-index:1;display:none"></div>
+
+      <div class="hint-pill" id="map-hint">Nhấn vào icon trạm để xem ETA</div>
+      <button class="map-fab" id="taxi-fab" style="display:none" onclick="loadTaxi()" title="Làm mới Taxi">↻</button>
+    </div>
+
+  </div><!-- /workspace -->
+</div><!-- /app -->
+
+<script>
+  const API = '';
+
+  /* ─── TAB SWITCHING ─── */
+  const mapDivIds = { bus: 'bus-map', mrt: 'mrt-map', carpark: 'cp-map', ev: 'ev-map', taxi: 'taxi-map' };
+
+  function showMap(name) {
+    Object.values(mapDivIds).forEach(id => document.getElementById(id).style.display = 'none');
+    document.getElementById(mapDivIds[name]).style.display = 'block';
+    const mapObj = { bus: busMap, mrt: mrtMap, carpark: cpMap, ev: evMap, taxi: taxiMap }[name];
+    if (mapObj) setTimeout(() => mapObj.invalidateSize(), 50);
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.nav-tab').forEach((t, i) => {
+      t.classList.toggle('active', ['bus','mrt','carpark','ev','taxi'][i] === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById(`tab-${name}`).classList.add('active');
+    showMap(name);
+
+    const hint = document.getElementById('map-hint');
+    const fab  = document.getElementById('taxi-fab');
+    const footer = document.getElementById('panel-footer-hint');
+
+    hint.style.display = 'none';
+    fab.style.display  = 'none';
+    footer.textContent = '';
+
+    if (name === 'bus') {
+      hint.style.display = 'flex';
+      footer.textContent = 'Nhấn vào trạm trên bản đồ để xem ETA';
+    } else if (name === 'taxi') {
+      fab.style.display = 'flex';
+      footer.textContent = 'Dữ liệu cập nhật mỗi 60 giây';
+    }
+
+    if (name === 'taxi'    && !taxiMap)  initTaxiTab();
+    if (name === 'ev'      && !evMap)    initEVMap();
+    if (name === 'carpark' && !cpMap)    initCPMap();
+    if (name === 'mrt'     && !mrtMap)   initMRTMap();
+  }
+
+  /* MRT line chip selector */
+  function selectLine(el, lineCode) {
+    document.querySelectorAll('.line-chip').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    document.getElementById('mrt-line').value = lineCode;
+    loadMRT();
+  }
+
+  /* ─── BASE TILE ─── */
+  function baseTile(map) {
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
+  }
+
+  /* ─── BADGE HELPER ─── */
+  function chip(cls, text) {
+    return `<span class="chip ${cls}">${text}</span>`;
+  }
+
+  // ======================================================
+  // BUS TAB
+  // ======================================================
+  let busMap = null, stopMarkers = [], busStopsData = [];
+
+  async function initBusMap() {
+    busMap = L.map('bus-map').setView([1.3521, 103.8198], 12);
+    baseTile(busMap);
+
+    try {
+      const res  = await fetch(`${API}/bus/stops`);
+      const data = await res.json();
+      busStopsData = data.stops;
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:9px;height:9px;background:#1a73e8;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.35);opacity:.92"></div>`,
+        iconAnchor: [4, 4]
+      });
+
+      busStopsData.forEach(stop => {
+        if (!stop.Latitude || !stop.Longitude) return;
+        const m = L.marker([stop.Latitude, stop.Longitude], { icon }).addTo(busMap);
+        m.on('click', () => onStopClick(stop));
+        stopMarkers.push(m);
+      });
+
+      document.getElementById('bus-info').innerHTML = `
+        <div class="state-box" style="padding:24px">
+          <div class="state-icon">🗺️</div>
+          <div class="state-title">${data.count} trạm đã tải</div>
+          <div class="state-sub">Nhấn vào bất kỳ điểm xanh trên bản đồ để xem ETA theo thời gian thực.</div>
+        </div>`;
+
+      loadPageRank();
+    } catch (e) {
+      document.getElementById('bus-info').innerHTML =
+        `<div class="error-bar">❌ Lỗi tải trạm: ${e.message}</div>`;
+    }
+  }
+
+  async function loadPageRank() {
+    try {
+      const res  = await fetch(`${API}/bus/pagerank`);
+      const data = await res.json();
+      let html = '';
+      data.forEach((item, i) => {
+        html += `
+          <div class="item-card" onclick="focusStop('${item.id}')">
+            <div class="card-row">
+              <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+                <div style="font-size:11px;font-weight:700;color:var(--text4);width:20px;flex-shrink:0">#${i+1}</div>
+                <div class="card-title">${item.name}</div>
+              </div>
+              ${chip('chip-free', item.importance)}
+            </div>
+            <div class="card-meta" style="padding-left:28px">${item.road} · Mã ${item.id}</div>
+          </div>`;
+      });
+      document.getElementById('pagerank-list').innerHTML = html;
+    } catch (e) {
+      document.getElementById('pagerank-list').innerHTML =
+        `<div class="error-bar">❌ Lỗi PageRank: ${e.message}</div>`;
+    }
+  }
+
+  function focusStop(id) {
+    const stop = busStopsData.find(s => s.BusStopCode === id);
+    if (stop && busMap) {
+      busMap.setView([stop.Latitude, stop.Longitude], 16);
+      onStopClick(stop);
+    }
+  }
+
+  async function onStopClick(stop) {
+    document.getElementById('bus-info').innerHTML = `
+      <div class="bus-info-panel">
+        <div class="stop-card">
+          <div class="stop-header">
+            <div class="stop-header-icon">🚌</div>
+            <div class="stop-header-text">
+              <div class="stop-name">${stop.Description}</div>
+              <div class="stop-sub">${stop.RoadName} · ${stop.BusStopCode}</div>
+            </div>
+          </div>
+          <div class="stop-body">
+            <div class="state-box" style="padding:20px"><div class="spinner"></div><span>Đang lấy ETA…</span></div>
+          </div>
+        </div>
+      </div>`;
+
+    try {
+      const res  = await fetch(`${API}/bus/arrivals/${stop.BusStopCode}`);
+      const data = await res.json();
+
+      if (!data.data || data.data.length === 0) {
+        document.getElementById('bus-info').innerHTML = `
+          <div class="bus-info-panel">
+            <div class="stop-card">
+              <div class="stop-header">
+                <div class="stop-header-icon">🚌</div>
+                <div class="stop-header-text">
+                  <div class="stop-name">${stop.Description}</div>
+                  <div class="stop-sub">${stop.RoadName} · ${stop.BusStopCode}</div>
+                </div>
+              </div>
+              <div class="stop-body">
+                <div class="state-box" style="padding:20px">
+                  <div class="state-icon">🕐</div>
+                  <div class="state-sub">Không có xe sắp đến trong thời gian này.</div>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      const loadCls = { LOW: 'chip-low', MEDIUM: 'chip-medium', HIGH: 'chip-high' };
+      const loadLabel = { LOW: 'Thoải mái', MEDIUM: 'Đông vừa', HIGH: 'Rất đông' };
+
+      const rows = data.data.map(svc => {
+        const b   = svc.buses[0];
+        const cls = loadCls[b.load] || 'chip-unknown';
+        const lbl = loadLabel[b.load] || b.load;
+        const next = svc.buses[1]
+          ? `<div class="eta-next">Tiếp theo: +${svc.buses[1].eta_minutes} min</div>` : '';
+        const eta = b.eta_minutes !== null ? b.eta_minutes : '?';
+        const etaColor = eta <= 2 ? 'color:var(--green)' : eta >= 10 ? 'color:var(--text3)' : '';
+        return `
+          <div class="eta-row">
+            <div class="svc-chip">${svc.service_no}</div>
+            <div class="eta-info">
+              ${chip(cls, lbl)}
+              ${b.feature === 'WAB' ? '<span title="Wheelchair Accessible" style="font-size:14px">♿</span>' : ''}
+              ${b.type === 'DD' ? '<span title="Xe bus 2 tầng" style="font-size:13px;color:var(--text3);font-weight:600;margin-left:2px;">2 Tầng</span>' : ''}
+            </div>
+            <div class="eta-time-group">
+              <div style="${etaColor}">
+                <span class="eta-time-big">${eta}</span>
+                <span class="eta-unit"> min</span>
+              </div>
+              ${next}
+            </div>
+          </div>`;
+      }).join('');
+
+      document.getElementById('bus-info').innerHTML = `
+        <div class="bus-info-panel">
+          <div class="stop-card">
+            <div class="stop-header">
+              <div class="stop-header-icon">🚌</div>
+              <div class="stop-header-text">
+                <div class="stop-name">${stop.Description}</div>
+                <div class="stop-sub">${stop.RoadName} · ${stop.BusStopCode} · ${data.source || ''}</div>
+              </div>
+            </div>
+            <div class="stop-body">${rows}</div>
+          </div>
+          <div style="font-size:11px;color:var(--text4);padding:6px 2px;text-align:right">Nhấn lại để refresh</div>
+        </div>`;
+    } catch (e) {
+      document.getElementById('bus-info').innerHTML =
+        `<div class="error-bar">❌ Lỗi lấy ETA: ${e.message}</div>`;
+    }
+  }
+
+  // ======================================================
+  // MRT TAB
+  // ======================================================
+  let mrtMap = null, mrtMarkers = [], mrtLines = [], mrtGeoJSONData = null;
+
+  const lineColors = {
+    'NS': '#d42e12', 'EW': '#009645', 'NE': '#74147c',
+    'CC': '#ff9e1b', 'DT': '#005da0', 'TE': '#9d5b25',
+  };
+
+  const lineNames = {
+    'NSL': 'North South Line', 'EWL': 'East West Line', 'NEL': 'North East Line',
+    'CCL': 'Circle Line', 'DTL': 'Downtown Line', 'TEL': 'Thomson-East Coast Line',
+  };
+
+  async function initMRTMap() {
+    mrtMap = L.map('mrt-map').setView([1.3521, 103.8198], 12);
+    baseTile(mrtMap);
+    try {
+      const res = await fetch('/static/mrt_lines.geojson');
+      mrtGeoJSONData = await res.json();
+      loadMRT();
+    } catch(e) { console.error('GeoJSON MRT error:', e); }
+  }
+
+  async function loadMRT() {
+    const line = document.getElementById('mrt-line').value;
+    document.getElementById('mrt-result').innerHTML =
+      '<div class="state-box"><div class="spinner"></div><span>Đang tải MRT…</span></div>';
+
+    try {
+      const [crowdRes, alertRes] = await Promise.all([
+        fetch(`${API}/mrt/crowd/${line}`),
+        fetch(`${API}/mrt/alerts`)
+      ]);
+      const crowd  = await crowdRes.json();
+      const alerts = await alertRes.json();
+
+      if (mrtMap && mrtGeoJSONData) {
+        mrtMarkers.forEach(m => mrtMap.removeLayer(m));
+        mrtLines.forEach(l => mrtMap.removeLayer(l));
+        mrtMarkers = []; mrtLines = [];
+
+        const lineName = lineNames[line];
+        const prefix   = line.substring(0, 2);
+        const color    = lineColors[prefix] || '#333';
+        const crowdInfoMap = {};
+        if (crowd?.stations) crowd.stations.forEach(s => { crowdInfoMap[s.station] = s; });
+
+        const lineLayer = L.geoJSON(mrtGeoJSONData, {
+          filter: f => f.geometry.type.includes('LineString') && f.properties.name === lineName,
+          style: { color, weight: 5, opacity: 0.85 }
+        }).addTo(mrtMap);
+        mrtLines.push(lineLayer);
+
+        const pointLayer = L.geoJSON(mrtGeoJSONData, {
+          filter: f => f.geometry.type === 'Point' &&
+            f.properties.station_codes &&
+            f.properties.station_codes.split('-').some(c => c.startsWith(prefix)),
+          pointToLayer: (feature, latlng) => {
+            const icon = L.divIcon({
+              className: '',
+              html: `<div style="width:12px;height:12px;background:${color};border-radius:50%;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`,
+              iconAnchor: [6, 6]
+            });
+            const codes = feature.properties.station_codes?.split('-') || [];
+            let crowdStatus = 'No data', emoji = '⚪';
+            for (const c of codes) {
+              if (crowdInfoMap[c]) {
+                crowdStatus = crowdInfoMap[c].crowd_text;
+                emoji = crowdStatus === 'HIGH' ? '🔴' : crowdStatus === 'MEDIUM' ? '🟡' : '🟢';
+                break;
+              }
+            }
+            return L.marker(latlng, { icon })
+              .bindPopup(`<b>${feature.properties.name}</b><br>Mã ga: ${feature.properties.station_codes}<br>Tình trạng: ${emoji} ${crowdStatus}`);
+          }
+        }).addTo(mrtMap);
+        mrtMarkers.push(pointLayer);
+
+        if (lineLayer.getBounds().isValid()) mrtMap.fitBounds(lineLayer.getBounds());
+      }
+
+      const alertDiv = document.getElementById('mrt-alert');
+      alertDiv.innerHTML = alerts.count > 0
+        ? `<div class="alert-bar">⚠️ ${alerts.count} cảnh báo gián đoạn — kiểm tra app LTA.</div>` : '';
+
+      const crowdMap = { LOW: 'low', MEDIUM: 'medium', HIGH: 'high', UNKNOWN: 'unknown' };
+      let html = `<div class="result-meta">${crowd.stations.length} ga · <span style="color:var(--red);font-weight:600">${crowd.high_count} ga đông</span></div>`;
+      html += crowd.stations.map(s => {
+        const cls   = crowdMap[s.crowd_text] || 'unknown';
+        const emoji = s.crowd_text === 'HIGH' ? '🔴' : s.crowd_text === 'MEDIUM' ? '🟡' : '🟢';
+        const chipCls = cls === 'low' ? 'chip-low' : cls === 'medium' ? 'chip-medium' : cls === 'high' ? 'chip-high' : 'chip-unknown';
+        return `
+          <div class="item-card crowd-${cls}">
+            <div class="card-row">
+              <span class="card-title">${s.station}</span>
+              ${chip(chipCls, emoji + ' ' + s.crowd_text)}
+            </div>
+            <div class="card-meta">
+              ${s.alert_level !== 'NORMAL' ? `⚠️ ${s.alert_level}` : '✓ Bình thường'}
+              ${s.updated_at ? ' · ' + s.updated_at.substring(11, 19) : ''}
+            </div>
+          </div>`;
+      }).join('');
+      document.getElementById('mrt-result').innerHTML = html;
+    } catch (e) {
+      document.getElementById('mrt-result').innerHTML =
+        `<div class="error-bar">❌ Lỗi: ${e.message}</div>`;
+    }
+  }
+
+  // ======================================================
+  // CARPARK TAB
+  // ======================================================
+  let cpMap = null, cpMarkers = [];
+
+  function initCPMap() {
+    cpMap = L.map('cp-map').setView([1.3521, 103.8198], 12);
+    baseTile(cpMap);
+    loadCarpark();
+  }
+
+  async function loadCarpark() {
+    const agency  = document.getElementById('cp-agency').value;
+    const minLots = document.getElementById('cp-min-lots').value;
+    document.getElementById('cp-result').innerHTML =
+      '<div class="state-box"><div class="spinner"></div><span>Đang tải Carpark…</span></div>';
+
+    let url = `${API}/carpark?min_lots=${minLots}`;
+    if (agency) url += `&agency=${agency}`;
+
+    try {
+      const res  = await fetch(url);
+      const data = await res.json();
+
+      const statusCls = {
+        AVAILABLE: 'chip-free', LIMITED: 'chip-medium',
+        ALMOST_FULL: 'chip-busy', FULL: 'chip-full', UNKNOWN: 'chip-unknown'
+      };
+
+      cpMarkers.forEach(m => cpMap.removeLayer(m));
+      cpMarkers = [];
+
+      let html = `<div class="result-meta">${data.count} bãi đỗ · <span style="color:var(--red);font-weight:600">${data.full_count} đầy</span></div>`;
+
+      data.carparks.slice(0, 100).forEach(cp => {
+        const cpName     = cp.development ? `${cp.development} (${cp.carpark_id})` : `Carpark ${cp.carpark_id}`;
+        const lotTypeMap = { C: 'Xe hơi', Y: 'Xe máy', H: 'Xe tải' };
+        const lotType    = lotTypeMap[cp.lot_type] || cp.lot_type || 'Xe hơi';
+
+        if (cp.latitude && cp.longitude) {
+          const m = L.marker([cp.latitude, cp.longitude])
+            .bindPopup(`<b>${cpName}</b><br>Khu vực: ${cp.area || '—'}<br>Loại xe: ${lotType}<br>Trống: <b>${cp.available_lots}</b> chỗ<br>Quản lý: ${cp.agency}`)
+            .addTo(cpMap);
+          cpMarkers.push(m);
+        }
+
+        html += `
+          <div class="item-card">
+            <div class="card-row">
+              <span class="card-title">${cpName}</span>
+              ${chip(statusCls[cp.status] || 'chip-unknown', cp.available_lots + ' chỗ')}
+            </div>
+            <div class="card-meta">${cp.area || '—'} · ${cp.agency} · ${lotType}</div>
+          </div>`;
+      });
+
+      document.getElementById('cp-result').innerHTML = html;
+      if (cpMarkers.length > 0) cpMap.fitBounds(new L.featureGroup(cpMarkers).getBounds());
+    } catch (e) {
+      document.getElementById('cp-result').innerHTML =
+        `<div class="error-bar">❌ Lỗi: ${e.message}</div>`;
+    }
+  }
+
+  // ======================================================
+  // EV TAB
+  // ======================================================
+  let evMap = null, evMarkers = [];
+
+  async function initEVMap() {
+    evMap = L.map('ev-map').setView([1.3521, 103.8198], 12);
+    baseTile(evMap);
+    await loadAllEVStations();
+  }
+
+  async function loadAllEVStations() {
+    try {
+      const res  = await fetch(`${API}/ev/stations`);
+      const data = await res.json();
+      data.stations.forEach(s => {
+        if (!s.latitude || !s.longitude) return;
+        const m = L.marker([s.latitude, s.longitude])
+          .bindPopup(`<b>${s.name || 'EV Station'}</b><br>Địa chỉ: ${s.address || '—'}<br>Trống: <b>${s.available ?? '?'}</b>/${s.total_points ?? '?'}<br>Nhà mạng: ${s.operator || '—'}`)
+          .addTo(evMap);
+        evMarkers.push(m);
+      });
+    } catch(e) { console.error('Lỗi tải trạm sạc:', e); }
+  }
+
+  function useMyLocation() {
+    if (!navigator.geolocation) return alert('Trình duyệt không hỗ trợ định vị');
+    navigator.geolocation.getCurrentPosition(pos => {
+      document.getElementById('ev-lat').value = pos.coords.latitude.toFixed(4);
+      document.getElementById('ev-lng').value = pos.coords.longitude.toFixed(4);
+      loadEV();
+    });
+  }
+
+  async function loadEV() {
+    const lat    = document.getElementById('ev-lat').value;
+    const lng    = document.getElementById('ev-lng').value;
+    const radius = document.getElementById('ev-radius').value;
+    document.getElementById('ev-result').innerHTML =
+      '<div class="state-box"><div class="spinner"></div><span>Đang tìm trạm sạc…</span></div>';
+
+    try {
+      const res  = await fetch(`${API}/ev/stations?lat=${lat}&lng=${lng}&radius_km=${radius}`);
+      const data = await res.json();
+
+      if (data.count === 0) {
+        document.getElementById('ev-result').innerHTML =
+          '<div class="state-box"><div class="state-icon">⚡</div><div class="state-sub">Không có trạm sạc trong bán kính này.</div></div>';
+        return;
+      }
+
+      const avMap = {
+        FREE: 'chip-free', MODERATE: 'chip-medium',
+        BUSY: 'chip-busy', FULL: 'chip-full', UNKNOWN: 'chip-unknown'
+      };
+      const avLabel = { FREE: 'Sẵn sàng', MODERATE: 'Vừa', BUSY: 'Bận', FULL: 'Đầy', UNKNOWN: '—' };
+
+      let html = `<div class="result-meta">${data.count} trạm trong ${radius} km</div>`;
+      data.stations.forEach(s => {
+        html += `
+          <div class="item-card">
+            <div class="card-row">
+              <span class="card-title">${s.name || 'EV Station'}</span>
+              ${chip(avMap[s.availability_level] || 'chip-unknown', (s.available ?? '?') + '/' + (s.total_points ?? '?'))}
+            </div>
+            <div class="card-meta">${s.address || ''}</div>
+            <div class="card-meta">${s.operator || ''} · ${avLabel[s.availability_level] || '—'}</div>
+          </div>`;
+      });
+
+      document.getElementById('ev-result').innerHTML = html;
+      evMap.setView([lat, lng], 14);
+    } catch (e) {
+      document.getElementById('ev-result').innerHTML =
+        `<div class="error-bar">❌ Lỗi: ${e.message}</div>`;
+    }
+  }
+
+  // ======================================================
+  // TAXI TAB
+  // ======================================================
+  let taxiMap = null, taxiMarkers = [];
+
+  function initTaxiTab() {
+    taxiMap = L.map('taxi-map').setView([1.3521, 103.8198], 12);
+    baseTile(taxiMap);
+    loadTaxi();
+  }
+
+  async function loadTaxi() {
+    try {
+      const res  = await fetch(`${API}/taxi/positions`);
+      const data = await res.json();
+
+      document.getElementById('taxi-count').textContent = data.total_nearby;
+      document.getElementById('taxi-update').textContent = new Date().toLocaleTimeString('vi-VN');
+
+      taxiMarkers.forEach(m => taxiMap.removeLayer(m));
+      taxiMarkers = [];
+
+      data.grid_cells.forEach(cell => {
+        if (!cell.lat || !cell.lng) return;
+        const size = Math.min(26, 8 + cell.taxi_count * 2);
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="width:${size}px;height:${size}px;background:#f9ab00;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 1px 5px rgba(0,0,0,.3);opacity:.88"></div>`,
+          iconAnchor: [size / 2, size / 2]
+        });
+        const m = L.marker([cell.lat, cell.lng], { icon })
+          .bindPopup(`<b>${cell.taxi_count}</b> taxi rảnh khu vực này`)
+          .addTo(taxiMap);
+        taxiMarkers.push(m);
+      });
+    } catch (e) {
+      console.error('Taxi error:', e);
+    }
+  }
+
+  // ======================================================
+  // INIT
+  // ======================================================
+  window.onload = () => {
+    initBusMap();
+    setInterval(() => { if (taxiMap) loadTaxi(); }, 60000);
+  };
+</script>
+</body>
+</html>
