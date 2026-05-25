@@ -1396,7 +1396,7 @@
 
       let html = `<div class="result-meta">${data.count} bãi đỗ · <span style="color:var(--red);font-weight:600">${data.full_count} đầy</span></div>`;
 
-      data.carparks.slice(0, 100).forEach(cp => {
+      data.carparks.forEach(cp => {
         const cpName     = cp.development ? `${cp.development} (${cp.carpark_id})` : `Carpark ${cp.carpark_id}`;
         const lotTypeMap = { C: 'Xe hơi', Y: 'Xe máy', H: 'Xe tải' };
         const lotType    = lotTypeMap[cp.lot_type] || cp.lot_type || 'Xe hơi';

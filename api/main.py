@@ -292,7 +292,7 @@ async def get_carparks(
     docs = list(db.speed_carpark
         .find(query, {"_id": 0})
         .sort("ingested_at", -1)
-        .limit(1000))
+        .limit(5000))
 
     # Chỉ lấy record mới nhất mỗi carpark
     latest = {}
