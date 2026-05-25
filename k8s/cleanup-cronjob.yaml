@@ -60,7 +60,7 @@ data:
             try:
                 to_del = [o.object_name for o in
                           mc.list_objects(MINIO_BUCKET, prefix=prefix, recursive=True)
-                          if o.last_modified and o.last_modified < cutoff]
+                          if o.last_modified and o.last_modified < cutoff and "_spark_metadata" not in o.object_name]
                 if not to_del:
                     log.info(f"  MinIO {prefix}: nothing to delete")
                     continue

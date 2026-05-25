@@ -256,14 +256,15 @@ def fetch_taxi():
         return []
     ts = now_utc()
     msgs = []
-    features = r.json().get("features", [])
-    for feat in features:
-        coords = feat.get("geometry", {}).get("coordinates", [])
-        if len(coords) >= 2:
+    value = r.json().get("value", [])
+    for taxi in value:
+        lng = taxi.get("Longitude")
+        lat = taxi.get("Latitude")
+        if lat is not None and lng is not None:
             msgs.append({
                 "event_type":  "taxi",
-                "longitude":   float(coords[0]),
-                "latitude":    float(coords[1]),
+                "longitude":   float(lng),
+                "latitude":    float(lat),
                 "ingested_at": ts
             })
     return msgs

@@ -1,105 +1,463 @@
 """
-FastAPI serving layer for the Singapore transit monitoring system.
-
-Flows:
-1. Static bus stops from MongoDB, cached in Redis for one hour.
-2. Bus arrivals from LTA DataMall on demand, cached in Redis for 20 seconds.
-3. MRT, carpark, EV, and taxi speed views from MongoDB.
+3 loại data source:
+1. MongoDB bus_stops_static → GET /bus/stops (5,000 trạm, 1 lần)
+2. LTA API trực tiếp (on-demand) → GET /bus/arrivals/{code} (khi user click)
+3. MongoDB speed_* (Spark Streaming ghi) → MRT / Carpark / EV / Taxi
 """
 
-from __future__ import annotations
-
-import json
-import math
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
-
-import httpx
-import redis
-from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pymongo import MongoClient
+import redis
+import httpx        # async HTTP client để gọi LTA API
+import json
+import os
+import math
+from typing import Optional
+from datetime import datetime, timezone
 
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-
-MONGO_URI = os.getenv("MONGODB_URI", "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017")
-MONGO_DB = os.getenv("MONGODB_DATABASE", "transit_db")
-REDIS_HOST = os.getenv("REDIS_HOST", "redis-master.data.svc.cluster.local")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+MONGO_URI  = os.getenv("MONGODB_URI",
+    "mongodb://root:Transit%402024@mongodb.data.svc.cluster.local:27017")
+REDIS_HOST = os.getenv("REDIS_HOST",
+    "redis-master.data.svc.cluster.local")
 REDIS_PASS = os.getenv("REDIS_PASSWORD", "Redis@2024")
-LTA_KEY = os.getenv("LTA_API_KEY", "")
-LTA_BASE = os.getenv("LTA_BASE_URL", "https://datamall2.mytransport.sg/ltaodataservice")
+LTA_KEY    = os.getenv("LTA_API_KEY", "your_key")
+LTA_BASE   = "https://datamall2.mytransport.sg/ltaodataservice"
 
-mongo = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2500)
-db = mongo[MONGO_DB]
-cache = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    password=REDIS_PASS or None,
-    decode_responses=True,
-    socket_timeout=2,
-)
+mongo = MongoClient(MONGO_URI)
+db    = mongo["transit_db"]
+r     = redis.Redis(host=REDIS_HOST, password=REDIS_PASS,
+                    decode_responses=True, socket_timeout=2)
 
 app = FastAPI(title="SG Transit API", version="2.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["GET"], allow_headers=["*"])
 
 
-def jsonable(value: Any) -> Any:
-    if isinstance(value, ObjectId):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, list):
-        return [jsonable(item) for item in value]
-    if isinstance(value, dict):
-        return {key: jsonable(item) for key, item in value.items()}
-    return value
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
+@app.get("/")
+async def root():
+    return FileResponse("static/index.html")
+# ============================================================
+# BUS ENDPOINT A: Tải 5,000 trạm (1 lần khi mở web)
+# ============================================================
 
-def cache_get(key: str) -> Any | None:
+@app.get("/bus/stops")
+async def get_all_stops():
+    """
+    Trả về tất cả bus stops để Frontend vẽ map.
+    Đọc từ MongoDB bus_stops_static — dữ liệu tĩnh, không gọi LTA.
+    Frontend gọi 1 lần duy nhất khi mở web, cache lại trong browser.
+    """
+    # Thử Redis cache trước (TTL 1 tiếng — data tĩnh, ít thay đổi)
+    cached = None
     try:
-        raw = cache.get(key)
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
-
-
-def cache_set(key: str, ttl_seconds: int, value: Any) -> None:
-    try:
-        cache.setex(key, ttl_seconds, json.dumps(jsonable(value)))
+        cached = r.get("bus:stops:all")
     except Exception:
         pass
 
+    if cached:
+        return {"source": "cache", "count": json.loads(cached)["count"],
+                "stops": json.loads(cached)["stops"]}
 
-def latest_by_key(docs: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    latest: dict[Any, dict[str, Any]] = {}
-    for doc in docs:
-        value = doc.get(key)
-        if value and value not in latest:
-            latest[value] = doc
-    return list(latest.values())
+    stops = list(db.bus_stops_static.find(
+        {},
+        {"_id": 0, "BusStopCode": 1, "RoadName": 1,
+         "Description": 1, "Latitude": 1, "Longitude": 1}
+    ).limit(5000))
+
+    result = {"count": len(stops), "stops": stops}
+
+    # Cache 1 tiếng
+    try:
+        r.setex("bus:stops:all", 3600, json.dumps(result))
+    except Exception:
+        pass
+
+    return {"source": "mongodb", **result}
 
 
-@app.get("/")
-async def root() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+# ============================================================
+# BUS ENDPOINT C: PageRank Top 10 (GraphFrames)
+# ============================================================
 
+@app.get("/bus/pagerank")
+async def get_pagerank():
+    """
+    Lấy Top 10 trạm xe bus quan trọng nhất phân tích bởi GraphFrames.
+    """
+    try:
+        docs = list(db["batch_graph_pagerank"].find({}, {"_id": 0}).sort("importance", -1).limit(10))
+        return docs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# BUS ENDPOINT B: ETA on-demand (khi user click một trạm)
+# ============================================================
+
+@app.get("/bus/arrivals/{bus_stop_code}")
+async def get_bus_arrivals(bus_stop_code: str):
+    """
+    Lấy ETA xe buýt tại trạm — on-demand khi user click icon trạm.
+
+    Luồng:
+    1. Kiểm tra Redis cache (TTL 20 giây)
+    2. Nếu cache miss → gọi thẳng LTA BusArrival API
+    3. Parse kết quả → lưu Redis → trả về Frontend
+
+    Tại sao không đọc MongoDB speed_bus?
+    → speed_bus chỉ có ~50 trạm đông nhất (từ ingestor Big Data pipeline)
+    → User có thể click bất kỳ trạm nào trong 5,000 trạm
+    → On-demand đảm bảo mọi trạm đều có data, luôn fresh
+    """
+    cache_key = f"bus:arrivals:{bus_stop_code}"
+
+    # 1. Thử Redis cache
+    try:
+        cached = r.get(cache_key)
+        if cached:
+            return {"source": "cache", "bus_stop_code": bus_stop_code,
+                    "data": json.loads(cached)}
+    except Exception:
+        pass
+
+    # 2. Gọi LTA BusArrival API trực tiếp
+    lta_url = f"{LTA_BASE}/v3/BusArrival"
+    lta_headers = {"AccountKey": LTA_KEY, "accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(lta_url,
+                                    headers=lta_headers,
+                                    params={"BusStopCode": bus_stop_code})
+            resp.raise_for_status()
+            lta_data = resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(504, "LTA API timeout — thử lại sau vài giây")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"LTA API error: {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(502, f"Cannot reach LTA API: {str(e)}")
+
+    # 3. Parse kết quả LTA
+    services = lta_data.get("Services", [])
+    if not services:
+        raise HTTPException(404, f"No buses found for stop {bus_stop_code}")
+
+    now_ts = datetime.utcnow()
+    formatted = []
+    for svc in services:
+        buses = []
+        for bus_key in ["NextBus", "NextBus2", "NextBus3"]:
+            bus = svc.get(bus_key, {})
+            eta_str = bus.get("EstimatedArrival", "")
+            if not eta_str:
+                continue
+
+            # Tính phút còn lại
+            try:
+                # Removed local import to fix UnboundLocalError
+                eta_dt = datetime.fromisoformat(eta_str)
+                if eta_dt.tzinfo is None:
+                    eta_dt = eta_dt.replace(tzinfo=timezone.utc)
+                now_aware = datetime.now(timezone.utc)
+                eta_minutes = round((eta_dt - now_aware).total_seconds() / 60, 1)
+                eta_minutes = max(0, eta_minutes)
+            except Exception:
+                eta_minutes = None
+
+            load_map = {"SEA": "LOW", "SDA": "MEDIUM", "LSD": "HIGH"}
+            buses.append({
+                "eta_minutes": eta_minutes,
+                "estimated_arrival": eta_str,
+                "load": load_map.get(bus.get("Load", ""), "UNKNOWN"),
+                "load_code": bus.get("Load", ""),
+                "lat": float(bus.get("Latitude") or 0),
+                "lng": float(bus.get("Longitude") or 0),
+                "monitored": bus.get("Monitored", 0),
+                "type": bus.get("Type", ""),
+                "feature": bus.get("Feature", ""),
+            })
+
+        if buses:
+            formatted.append({
+                "service_no": svc.get("ServiceNo", ""),
+                "operator":   svc.get("Operator", ""),
+                "buses":      buses,
+            })
+
+    # 4. Cache 20 giây (ETA cập nhật mỗi 20s — cache quá lâu sẽ stale)
+    try:
+        r.setex(cache_key, 20, json.dumps(formatted))
+    except Exception:
+        pass
+
+    return {
+        "source":        "lta_api",
+        "bus_stop_code": bus_stop_code,
+        "services_count": len(formatted),
+        "data":          formatted
+    }
+
+
+@app.get("/bus/stop/{bus_stop_code}/info")
+async def get_stop_info(bus_stop_code: str):
+    """Thông tin trạm: tên, địa chỉ, tuyến đi qua — từ static data"""
+    stop = db.bus_stops_static.find_one(
+        {"BusStopCode": bus_stop_code},
+        {"_id": 0}
+    )
+    if not stop:
+        raise HTTPException(404, f"Stop {bus_stop_code} not found")
+
+    # Các tuyến đi qua trạm này
+    routes = list(db.bus_routes_static.find(
+        {"BusStopCode": bus_stop_code},
+        {"_id": 0, "ServiceNo": 1, "Direction": 1, "StopSequence": 1}
+    ).sort("ServiceNo", 1))
+
+    return {
+        "stop":    stop,
+        "routes":  routes,
+        "services": sorted(set(r["ServiceNo"] for r in routes))
+    }
+
+
+# ============================================================
+# MRT ENDPOINTS — đọc từ speed_mrt (Spark Streaming ghi)
+# ============================================================
+
+@app.get("/mrt/crowd/{train_line}")
+async def get_mrt_crowd(train_line: str):
+    """Mật độ hành khách real-time theo tuyến MRT"""
+    valid = ["NSL", "EWL", "NEL", "CCL", "DTL", "TEL", "BPL"]
+    if train_line not in valid:
+        raise HTTPException(400, f"Invalid line. Use: {valid}")
+
+    docs = list(db.speed_mrt
+        .find({"train_line": train_line}, {"_id": 0})
+        .sort("ingested_at", -1).limit(50))
+
+    # Chỉ lấy record mới nhất mỗi ga
+    latest = {}
+    for d in docs:
+        s = d.get("station")
+        if s and s not in latest:
+            latest[s] = {
+                "station":     s,
+                "crowd_text":  d.get("crowd_text", "UNKNOWN"),
+                "alert_level": d.get("alert_level", "NORMAL"),
+                "updated_at":  str(d.get("ingested_at", ""))
+            }
+
+    return {
+        "train_line": train_line,
+        "stations":   list(latest.values()),
+        "high_count": sum(1 for s in latest.values()
+                          if s["crowd_text"] == "HIGH")
+    }
+
+
+@app.get("/mrt/alerts")
+async def get_train_alerts():
+    """Cảnh báo gián đoạn tàu điện"""
+    docs = list(db.speed_mrt
+        .find({"event_type": "train_alert"}, {"_id": 0})
+        .sort("ingested_at", -1).limit(20))
+    return {"alerts": docs, "count": len(docs)}
+
+
+# ============================================================
+# CARPARK ENDPOINTS — đọc từ speed_carpark
+# ============================================================
+
+@app.get("/carpark")
+async def get_carparks(
+    agency: Optional[str] = Query(None, description="HDB, LTA, URA"),
+    min_lots: int = Query(0, description="Minimum available lots"),
+    lot_type: str = Query("C", description="C=car, Y=motorcycle, H=heavy")
+):
+    """Danh sách bãi đỗ xe + số chỗ trống"""
+    query = {"lot_type": lot_type}
+    if agency:
+        query["agency"] = agency.upper()
+    if min_lots > 0:
+        query["available_lots"] = {"$gte": min_lots}
+
+    docs = list(db.speed_carpark
+        .find(query, {"_id": 0})
+        .sort("ingested_at", -1)
+        .limit(1000))
+
+    # Chỉ lấy record mới nhất mỗi carpark
+    latest = {}
+    for d in docs:
+        cp = d.get("carpark_id")
+        if cp and cp not in latest:
+            # Parse Location field (e.g., "1.3521 103.8198")
+            location_str = d.get("location") or d.get("Location") or ""
+            lat, lng = None, None
+            if location_str:
+                try:
+                    parts = location_str.split()
+                    if len(parts) >= 2:
+                        lat = float(parts[0])
+                        lng = float(parts[1])
+                except Exception:
+                    pass
+
+            latest[cp] = {
+                "carpark_id":     cp,
+                "development":    d.get("development", ""),
+                "area":           d.get("area", ""),
+                "agency":         d.get("agency", ""),
+                "available_lots": d.get("available_lots", 0),
+                "status":         d.get("status", "UNKNOWN"),
+                "lot_type":       d.get("lot_type", "C"),
+                "latitude":       lat or d.get("latitude") or d.get("Latitude"),
+                "longitude":      lng or d.get("longitude") or d.get("Longitude"),
+                "updated_at":     str(d.get("ingested_at", ""))
+            }
+
+    result = list(latest.values())
+    # Sắp xếp: nhiều chỗ trống lên trên
+    result.sort(key=lambda x: x["available_lots"], reverse=True)
+
+    return {
+        "count":     len(result),
+        "carparks":  result,
+        "full_count": sum(1 for c in result if c["available_lots"] == 0)
+    }
+
+
+# ============================================================
+# EV CHARGING ENDPOINTS — đọc từ speed_ev
+# ============================================================
+
+@app.get("/ev/stations")
+async def get_ev_stations(
+    lat: Optional[float] = Query(None, description="Latitude người dùng"),
+    lng: Optional[float] = Query(None, description="Longitude người dùng"),
+    radius_km: float = Query(5.0, description="Bán kính tìm kiếm (km)")
+):
+    """
+    Tìm trạm sạc EV.
+    Nếu có lat/lng → lọc theo bán kính.
+    Nếu không → trả về tất cả.
+    """
+    docs = list(db.speed_ev
+        .find({}, {"_id": 0})
+        .sort("ingested_at", -1)
+        .limit(2000))
+
+    # Chỉ lấy record mới nhất mỗi trạm
+    latest = {}
+    for d in docs:
+        lid = d.get("location_id")
+        if lid and lid not in latest:
+            latest[lid] = d
+
+    stations = list(latest.values())
+
+    # Lọc theo bán kính nếu có tọa độ
+    if lat is not None and lng is not None:
+        def haversine(lat1, lng1, lat2, lng2):
+            """Tính khoảng cách km giữa 2 tọa độ"""
+            R = 6371
+            dlat = math.radians(lat2 - lat1)
+            dlng = math.radians(lng2 - lng1)
+            a = math.sin(dlat/2)**2 + \
+                math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+                math.sin(dlng/2)**2
+            return R * 2 * math.asin(math.sqrt(a))
+
+        stations = [
+            s for s in stations
+            if s.get("latitude") and s.get("longitude") and
+               haversine(lat, lng, s["latitude"], s["longitude"]) <= radius_km
+        ]
+        # Sắp xếp theo khoảng cách
+        stations.sort(key=lambda s: haversine(lat, lng, s["latitude"], s["longitude"]))
+
+    return {
+        "count":    len(stations),
+        "stations": stations
+    }
+
+
+# ============================================================
+# TAXI ENDPOINT — đọc từ speed_taxi (grid aggregation)
+# ============================================================
+
+@app.get("/taxi/positions")
+async def get_taxi_positions():
+    """
+    Vị trí taxi rảnh theo lưới địa lý.
+    Mỗi điểm trên map = 1 ô lưới (~1km²) với số lượng taxi rảnh.
+    Frontend vẽ dots lên map — size dot tỷ lệ với taxi_count.
+    """
+    docs = list(db.speed_taxi
+        .find({}, {"_id": 0})
+        .sort("window_start", -1)
+        .limit(500))
+
+    # Chỉ lấy window mới nhất mỗi ô lưới
+    latest_window = docs[0].get("window_start") if docs else None
+    if latest_window:
+        docs = [d for d in docs if d.get("window_start") == latest_window]
+
+    grid_cells = [
+        {
+            "lat":         d.get("center_lat"),
+            "lng":         d.get("center_lng"),
+            "taxi_count":  d.get("taxi_count", 0),
+        }
+        for d in docs
+        if d.get("center_lat") and d.get("center_lng")
+    ]
+
+    return {
+        "total_nearby":  sum(c["taxi_count"] for c in grid_cells),
+        "grid_count":    len(grid_cells),
+        "grid_cells":    grid_cells,
+        "updated_at":    str(latest_window) if latest_window else None
+    }
+
+
+# ============================================================
+# ENDPOINTS BỔ SUNG CHO GRAFANA (JSON API)
+# ============================================================
+
+@app.get("/bus/speed_bus")
+async def get_speed_bus():
+    """Lấy dữ liệu speed_bus cho Grafana Panel 1"""
+    docs = list(db.speed_bus.find({}, {"_id": 0}).sort("window_start", -1).limit(1000))
+    return docs
+
+@app.get("/batch/hourly_pivot")
+async def get_batch_hourly_pivot():
+    """Lấy dữ liệu batch_hourly_pivot cho Grafana Panel 5"""
+    docs = list(db.batch_hourly_pivot.find({}, {"_id": 0}))
+    return docs
+
+@app.get("/taxi/speed_taxi")
+async def get_speed_taxi():
+    """Lấy dữ liệu speed_taxi cho Grafana Panel 4"""
+    docs = list(db.speed_taxi.find({}, {"_id": 0}).sort("window_start", -1).limit(1000))
+    return docs
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health():
     status = {"api": "ok", "mongodb": "unknown", "redis": "unknown"}
     try:
         db.command("ping")
@@ -107,242 +465,8 @@ async def health() -> dict[str, str]:
     except Exception:
         status["mongodb"] = "error"
     try:
-        cache.ping()
+        r.ping()
         status["redis"] = "ok"
     except Exception:
         status["redis"] = "error"
     return status
-
-
-@app.get("/bus/stops")
-async def get_all_stops() -> dict[str, Any]:
-    cached = cache_get("bus:stops:all")
-    if cached:
-        return {"source": "cache", **cached}
-
-    projection = {
-        "_id": 0,
-        "BusStopCode": 1,
-        "RoadName": 1,
-        "Description": 1,
-        "Latitude": 1,
-        "Longitude": 1,
-    }
-    stops = list(db.bus_stops_static.find({}, projection).limit(5000))
-    result = {"count": len(stops), "stops": jsonable(stops)}
-    cache_set("bus:stops:all", 3600, result)
-    return {"source": "mongodb", **result}
-
-
-@app.get("/bus/arrivals/{bus_stop_code}")
-async def get_bus_arrivals(bus_stop_code: str) -> dict[str, Any]:
-    cache_key = f"bus:arrivals:{bus_stop_code}"
-    cached = cache_get(cache_key)
-    if cached is not None:
-        return {
-            "source": "cache",
-            "bus_stop_code": bus_stop_code,
-            "services_count": len(cached),
-            "data": cached,
-        }
-
-    if not LTA_KEY or LTA_KEY == "your_key":
-        raise HTTPException(status_code=500, detail="LTA_API_KEY is not configured.")
-
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(
-                f"{LTA_BASE}/v3/BusArrival",
-                headers={"AccountKey": LTA_KEY, "accept": "application/json"},
-                params={"BusStopCode": bus_stop_code},
-            )
-            response.raise_for_status()
-            lta_data = response.json()
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="LTA API timeout") from exc
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"LTA API returned {exc.response.status_code}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Cannot reach LTA API: {exc}") from exc
-
-    formatted = []
-    for service in lta_data.get("Services", []):
-        buses = []
-        for bus_key in ("NextBus", "NextBus2", "NextBus3"):
-            bus = service.get(bus_key) or {}
-            eta_str = bus.get("EstimatedArrival")
-            if not eta_str:
-                continue
-            try:
-                eta_dt = datetime.fromisoformat(eta_str)
-                if eta_dt.tzinfo is None:
-                    eta_dt = eta_dt.replace(tzinfo=timezone.utc)
-                eta_minutes = max(0, round((eta_dt - datetime.now(timezone.utc)).total_seconds() / 60, 1))
-            except Exception:
-                eta_minutes = None
-
-            load_code = bus.get("Load", "")
-            buses.append(
-                {
-                    "eta_minutes": eta_minutes,
-                    "estimated_arrival": eta_str,
-                    "load": {"SEA": "LOW", "SDA": "MEDIUM", "LSD": "HIGH"}.get(load_code, "UNKNOWN"),
-                    "load_code": load_code,
-                    "lat": float(bus.get("Latitude") or 0),
-                    "lng": float(bus.get("Longitude") or 0),
-                    "monitored": bus.get("Monitored", 0),
-                    "type": bus.get("Type", ""),
-                    "feature": bus.get("Feature", ""),
-                }
-            )
-        if buses:
-            formatted.append({"service_no": service.get("ServiceNo", ""), "operator": service.get("Operator", ""), "buses": buses})
-
-    if not formatted:
-        raise HTTPException(status_code=404, detail=f"No buses found for stop {bus_stop_code}")
-
-    cache_set(cache_key, 20, formatted)
-    return {"source": "lta_api", "bus_stop_code": bus_stop_code, "services_count": len(formatted), "data": formatted}
-
-
-@app.get("/bus/stop/{bus_stop_code}/info")
-async def get_stop_info(bus_stop_code: str) -> dict[str, Any]:
-    stop = db.bus_stops_static.find_one({"BusStopCode": bus_stop_code}, {"_id": 0})
-    if not stop:
-        raise HTTPException(status_code=404, detail=f"Stop {bus_stop_code} not found")
-    routes = list(
-        db.bus_routes_static.find(
-            {"BusStopCode": bus_stop_code},
-            {"_id": 0, "ServiceNo": 1, "Direction": 1, "StopSequence": 1},
-        ).sort("ServiceNo", 1)
-    )
-    return {"stop": jsonable(stop), "routes": jsonable(routes), "services": sorted({r["ServiceNo"] for r in routes if r.get("ServiceNo")})}
-
-
-@app.get("/mrt/crowd/{train_line}")
-async def get_mrt_crowd(train_line: str) -> dict[str, Any]:
-    valid_lines = {"NSL", "EWL", "NEL", "CCL", "DTL", "TEL", "BPL"}
-    line = train_line.upper()
-    if line not in valid_lines:
-        raise HTTPException(status_code=400, detail=f"Invalid line. Use: {sorted(valid_lines)}")
-    docs = list(db.speed_mrt.find({"train_line": line}, {"_id": 0}).sort("ingested_at", -1).limit(200))
-    stations = [
-        {
-            "station": doc.get("station"),
-            "crowd_text": doc.get("crowd_text", "UNKNOWN"),
-            "alert_level": doc.get("alert_level", "NORMAL"),
-            "updated_at": jsonable(doc.get("ingested_at", "")),
-        }
-        for doc in latest_by_key(docs, "station")
-    ]
-    return {"train_line": line, "stations": stations, "high_count": sum(1 for s in stations if s["crowd_text"] == "HIGH")}
-
-
-@app.get("/mrt/alerts")
-async def get_train_alerts() -> dict[str, Any]:
-    docs = list(db.speed_mrt.find({"event_type": "train_alert"}, {"_id": 0}).sort("ingested_at", -1).limit(20))
-    return {"alerts": jsonable(docs), "count": len(docs)}
-
-
-@app.get("/carpark")
-async def get_carparks(
-    agency: str | None = Query(None, description="HDB, LTA, URA"),
-    min_lots: int = Query(0, ge=0),
-    lot_type: str = Query("C", description="C=car, Y=motorcycle, H=heavy"),
-) -> dict[str, Any]:
-    query: dict[str, Any] = {"lot_type": lot_type.upper()}
-    if agency:
-        query["agency"] = agency.upper()
-    if min_lots > 0:
-        query["available_lots"] = {"$gte": min_lots}
-
-    docs = list(db.speed_carpark.find(query, {"_id": 0}).sort("ingested_at", -1).limit(2000))
-    carparks = []
-    for doc in latest_by_key(docs, "carpark_id"):
-        lat = doc.get("latitude") or doc.get("Latitude")
-        lng = doc.get("longitude") or doc.get("Longitude")
-        location = doc.get("location") or doc.get("Location") or ""
-        if location and (lat is None or lng is None):
-            try:
-                lat, lng = [float(part) for part in location.split()[:2]]
-            except Exception:
-                pass
-        carparks.append(
-            {
-                "carpark_id": doc.get("carpark_id"),
-                "development": doc.get("development", ""),
-                "area": doc.get("area", ""),
-                "agency": doc.get("agency", ""),
-                "available_lots": int(doc.get("available_lots") or 0),
-                "status": doc.get("status", "UNKNOWN"),
-                "lot_type": doc.get("lot_type", "C"),
-                "latitude": lat,
-                "longitude": lng,
-                "updated_at": jsonable(doc.get("ingested_at", "")),
-            }
-        )
-    carparks.sort(key=lambda item: item["available_lots"], reverse=True)
-    return {"count": len(carparks), "carparks": jsonable(carparks), "full_count": sum(1 for cp in carparks if cp["available_lots"] == 0)}
-
-
-@app.get("/ev/stations")
-async def get_ev_stations(
-    lat: float | None = Query(None),
-    lng: float | None = Query(None),
-    radius_km: float = Query(5.0, gt=0, le=50),
-) -> dict[str, Any]:
-    docs = list(db.speed_ev.find({}, {"_id": 0}).sort("ingested_at", -1).limit(3000))
-    stations = latest_by_key(docs, "location_id")
-
-    if lat is not None and lng is not None:
-        def distance(station: dict[str, Any]) -> float:
-            station_lat = float(station["latitude"])
-            station_lng = float(station["longitude"])
-            dlat = math.radians(station_lat - lat)
-            dlng = math.radians(station_lng - lng)
-            a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(station_lat)) * math.sin(dlng / 2) ** 2
-            return 6371 * 2 * math.asin(math.sqrt(a))
-
-        nearby = []
-        for station in stations:
-            if station.get("latitude") is None or station.get("longitude") is None:
-                continue
-            try:
-                dist = distance(station)
-            except Exception:
-                continue
-            if dist <= radius_km:
-                station["distance_km"] = round(dist, 2)
-                nearby.append(station)
-        stations = sorted(nearby, key=lambda item: item["distance_km"])
-
-    return {"count": len(stations), "stations": jsonable(stations)}
-
-
-@app.get("/taxi/positions")
-async def get_taxi_positions() -> dict[str, Any]:
-    docs = list(db.speed_taxi.find({}, {"_id": 0}).sort("window_start", -1).limit(1000))
-    latest_window = docs[0].get("window_start") if docs else None
-    if latest_window is not None:
-        docs = [doc for doc in docs if doc.get("window_start") == latest_window]
-    cells = [
-        {"lat": doc.get("center_lat"), "lng": doc.get("center_lng"), "taxi_count": int(doc.get("taxi_count") or 0)}
-        for doc in docs
-        if doc.get("center_lat") is not None and doc.get("center_lng") is not None
-    ]
-    return {"total_nearby": sum(c["taxi_count"] for c in cells), "grid_count": len(cells), "grid_cells": cells, "updated_at": jsonable(latest_window)}
-
-
-@app.get("/bus/speed_bus")
-async def get_speed_bus() -> list[dict[str, Any]]:
-    return jsonable(list(db.speed_bus.find({}, {"_id": 0}).sort("window_start", -1).limit(1000)))
-
-
-@app.get("/batch/hourly_pivot")
-async def get_batch_hourly_pivot() -> list[dict[str, Any]]:
-    return jsonable(list(db.batch_hourly_pivot.find({}, {"_id": 0}).limit(1000)))
-
-
-@app.get("/taxi/speed_taxi")
-async def get_speed_taxi() -> list[dict[str, Any]]:
-    return jsonable(list(db.speed_taxi.find({}, {"_id": 0}).sort("window_start", -1).limit(1000)))
