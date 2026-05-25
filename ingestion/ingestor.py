@@ -20,28 +20,41 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-LTA_KEY    = os.getenv("LTA_API_KEY", "your_key_here")
-KAFKA_BOOT = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+LTA_KEY    = os.getenv("LTA_API_KEY", "e825ByV2QYWgz/NY8/B2Bw==")
+KAFKA_BOOT = os.getenv("KAFKA_BOOTSTRAP","kafka:9092")
 BASE       = "https://datamall2.mytransport.sg/ltaodataservice"
 HEADERS    = {"AccountKey": LTA_KEY, "accept": "application/json"}
 
 BUS_HOT_STOPS = [
+    # Orchard / Somerset
     "09022", "09048", "09057", "10199", "10221",
+    # Raffles Place / City Hall / Marina
     "03219", "03239", "04167", "05011", "01119",
+    # Bugis / Lavender
     "01012", "01019", "02049", "07371",
+    # Jurong East / Clementi
     "28031", "28059", "17009", "17091",
+    # Tampines / Bedok
     "83139", "84009", "82009", "75009",
+    # Woodlands / Yishun
     "46211", "65199", "67759", "46009",
+    # Bishan / Ang Mo Kio
     "53121", "52009", "54009", "55001",
+    # Queenstown / Buona Vista
     "11009", "11071", "21009",
+    # Serangoon / Hougang
     "62009", "62101", "64009",
+    # Changi / Airport
     "95009", "95129",
+    # Punggol / Sengkang
     "77009", "77131", "72009",
+    # Toa Payoh / Novena
     "51009", "51079", "52119",
 ]
 
 MRT_LINES = ["NSL", "EWL", "NEL", "CCL", "DTL", "TEL", "BPL"]
 
+# ------ kafka producer -----
 def make_producer():
     for attempt in range(5):
         try:
@@ -60,6 +73,7 @@ def make_producer():
             time.sleep(5)
     raise RuntimeError("Cannot connect to Kafka")
 
+# ---- HTTP helpers ----
 def get(url, params=None):
     try:
         r = requests.get(url, headers=HEADERS, params=params, timeout=10)
@@ -74,131 +88,203 @@ def get(url, params=None):
 def now_utc():
     return datetime.now(timezone.utc).isoformat()
 
+# ---- data fetchers ----
+
 def fetch_bus_arrivals(stop_code):
-    r = get(f"{BASE}/v3/BusArrival", params={"BusStopCode": stop_code})
+    """
+    ETA xe buýt tại một trạm.
+    Chỉ gọi cho các trạm trong BUS_HOT_STOPS.
+    ETA của trạm khác → FastAPI gọi on-demand khi user click.
+    """
+    r = get(f"{BASE}/v3/BusArrival", {"BusStopCode": stop_code})
     if not r:
         return []
     msgs = []
+    ts = now_utc()
     for svc in r.json().get("Services", []):
-        for visit in ["NextBus", "NextBus2", "NextBus3"]:
-            b = svc.get(visit, {})
-            if b.get("EstimatedArrival"):
-                msgs.append({
-                    "event_type":        "bus_arrival",
-                    "bus_stop_code":     stop_code,
-                    "service_no":        svc.get("ServiceNo"),
-                    "operator":          svc.get("Operator"),
-                    "estimated_arrival": b.get("EstimatedArrival"),
-                    "monitored":         b.get("Monitored"),
-                    "latitude":          float(b.get("Latitude", 0)),
-                    "longitude":         float(b.get("Longitude", 0)),
-                    "load":              b.get("Load"),
-                    "bus_type":          b.get("Type"),
-                    "visit_number":      visit,
-                    "ingested_at":       now_utc(),
-                })
+        for bus_key in ["NextBus", "NextBus2", "NextBus3"]:
+            bus = svc.get(bus_key, {})
+            if not bus.get("EstimatedArrival"):
+                continue
+            msgs.append({
+                "event_type":        "bus_arrival",
+                "bus_stop_code":     stop_code,
+                "service_no":        svc.get("ServiceNo", ""),
+                "operator":          svc.get("Operator", ""),
+                "estimated_arrival": bus["EstimatedArrival"],
+                "monitored":         bus.get("Monitored", 0),
+                "latitude":          float(bus.get("Latitude") or 0),
+                "longitude":         float(bus.get("Longitude") or 0),
+                "load":              bus.get("Load", ""),
+                "bus_type":          bus.get("Type", ""),
+                "feature":           bus.get("Feature", ""),
+                "visit_number":      bus_key,
+                "ingested_at":       ts
+            })
     return msgs
 
-def fetch_mrt_crowd(line):
-    r = get(f"{BASE}/PCDRealTime", params={"TrainLine": line})
+def fetch_mrt_crowd(train_line):
+    """
+    Mật độ hành khách real-time.
+    CrowdLevel: 'l'=low, 'm'=moderate, 'h'=high, 'NA'=unknown
+    Giữ nguyên ký tự LTA trả về — Spark sẽ decode trong UDF.
+    """
+    r = get(f"{BASE}/PCDRealTime", {"TrainLine": train_line})
     if not r:
         return []
+    ts = now_utc()
     msgs = []
-    for item in r.json().get("value", []):
+    for s in r.json().get("value", []):
         msgs.append({
             "event_type":  "mrt_crowd",
-            "train_line":  line,
-            "station":     item.get("Station"),
-            "crowd_level": item.get("CrowdLevel"),
-            "ingested_at": now_utc(),
+            "train_line":  train_line,
+            "station":     s.get("Station", ""),
+            "start_time":  s.get("StartTime", ""),
+            "end_time":    s.get("EndTime", ""),
+            "crowd_level": s.get("CrowdLevel", "NA"),
+            "ingested_at": ts
         })
     return msgs
 
 def fetch_train_alerts():
+    """Cảnh báo gián đoạn tàu điện"""
     r = get(f"{BASE}/TrainServiceAlerts")
     if not r:
         return []
-    data = r.json().get("value", {})
+    value = r.json().get("value", {})
+    status = value.get("Status", 1)
     msgs = []
-    for seg in data.get("AffectedSegments", []):
+    ts = now_utc()
+    for seg in value.get("AffectedSegments", []):
         msgs.append({
             "event_type":  "train_alert",
-            "line":        seg.get("Line"),
-            "direction":   seg.get("Direction"),
-            "stations":    seg.get("Stations"),
-            "free_public": seg.get("FreePublicBus"),
-            "free_mrt":    seg.get("FreeMRTShuttle"),
-            "status":      data.get("Status"),
-            "ingested_at": now_utc(),
+            "status":      status,
+            "line":        seg.get("Line", ""),
+            "direction":   seg.get("Direction", ""),
+            "stations":    seg.get("Stations", ""),
+            "free_bus":    seg.get("FreePublicBus", ""),
+            "ingested_at": ts
         })
-    if not msgs:
-        msgs.append({
-            "event_type":  "train_alert",
-            "line":        "ALL",
-            "status":      data.get("Status", 1),
-            "ingested_at": now_utc(),
-        })
+    if not msgs and status == 2:
+        msgs.append({"event_type": "train_alert", "status": 2,
+                     "line": "UNKNOWN", "ingested_at": ts})
     return msgs
 
 def fetch_carpark():
-    r = get(f"{BASE}/CarParkAvailabilityv2")
-    if not r:
-        return []
+    """Số chỗ trống bãi đỗ xe toàn Singapore — dùng pagination"""
+    all_records = []
+    skip = 0
+    while True:
+        r = get(f"{BASE}/CarParkAvailabilityv2",
+                {"$skip": skip} if skip else None)
+        if not r:
+            break
+        records = r.json().get("value", [])
+        if not records:
+            break
+        all_records.extend(records)
+        skip += 500
+        if len(records) < 500:
+            break
+    ts = now_utc()
     msgs = []
-    for item in r.json().get("value", []):
+    for cp in all_records:
         msgs.append({
             "event_type":     "carpark",
-            "carpark_id":     item.get("CarParkID"),
-            "available_lots": item.get("AvailableLots"),
-            "lot_type":       item.get("LotType"),
-            "agency":         item.get("Agency"),
-            "ingested_at":    now_utc(),
+            "carpark_id":     cp.get("CarParkID", ""),
+            "area":           cp.get("Area", ""),
+            "development":    cp.get("Development", ""),
+            "location":       cp.get("Location", ""),
+            "available_lots": cp.get("AvailableLots", 0),
+            "lot_type":       cp.get("LotType", "C"),
+            "agency":         cp.get("Agency", ""),
+            "ingested_at":    ts
         })
     return msgs
 
 def fetch_ev_batch():
+    """
+    Toàn bộ trạm sạc EV Singapore.
+    Dùng EVCBatch (trả về 1 file ZIP) thay EVChargingPoints (cần PostalCode từng lần).
+    """
     r = get(f"{BASE}/EVCBatch")
     if not r:
         return []
-    msgs = []
+    link = r.json().get("value", [{}])[0].get("Link", "")
+    if not link:
+        return []
     try:
-        z = zipfile.ZipFile(io.BytesIO(r.content))
-        for name in z.namelist():
-            if name.endswith(".json"):
-                data = json.loads(z.read(name))
-                for item in data.get("value", []):
-                    msgs.append({
-                        "event_type":      "ev_station",
-                        "location_id":     item.get("LocationID"),
-                        "operator":        item.get("Operator"),
-                        "available_lots":  item.get("AvailableLots"),
-                        "total_lots":      item.get("TotalLots"),
-                        "ingested_at":     now_utc(),
-                    })
+        data_r = requests.get(link, timeout=30)
+        data_r.raise_for_status()
+
+        # File có thể là ZIP hoặc JSON trực tiếp
+        stations_data = data_r.json()
+        if isinstance(stations_data, dict):
+            stations = stations_data.get("evLocationsData", [])
+        else:
+            stations = stations_data
+
+        ts = now_utc()
+        msgs = []
+        for s in stations:
+            pts = s.get("chargingPoints", [])
+            total = len(pts)
+            # Giả định status '1' là sẵn sàng (available)
+            avail = sum(1 for p in pts if str(p.get("status")) == "1")
+            occ = total - avail
+            
+            # Lấy operator từ point đầu tiên nếu có
+            op = pts[0].get("operator", "") if pts else ""
+
+            msgs.append({
+                "event_type":   "ev_station",
+                "location_id":  str(s.get("postalCode", "")),
+                "name":         s.get("name", "EV Station"),
+                "address":      s.get("address", ""),
+                "latitude":     float(s.get("latitude") or 0),
+                "longitude":    float(s.get("longtitude") or 0), # LTA typo: longtitude
+                "total_points": total,
+                "available":    avail,
+                "occupied":     occ,
+                "operator":     op,
+                "ingested_at":  ts
+            })
+        return msgs
     except Exception as e:
-        log.error(f"EV batch parse error: {e}")
-    return msgs
+        log.error(f"EV batch error: {e}")
+        return []
 
 def fetch_taxi():
+    """Vị trí taxi đang rảnh (sẵn sàng đón khách) toàn Singapore"""
     r = get(f"{BASE}/Taxi-Availability")
     if not r:
         return []
+    ts = now_utc()
     msgs = []
-    for item in r.json().get("value", []):
-        msgs.append({
-            "event_type":  "taxi",
-            "latitude":    item.get("Latitude"),
-            "longitude":   item.get("Longitude"),
-            "ingested_at": now_utc(),
-        })
+    value = r.json().get("value", [])
+    for taxi in value:
+        lng = taxi.get("Longitude")
+        lat = taxi.get("Latitude")
+        if lat is not None and lng is not None:
+            msgs.append({
+                "event_type":  "taxi",
+                "longitude":   float(lng),
+                "latitude":    float(lat),
+                "ingested_at": ts
+            })
     return msgs
 
+# ---- Main Loop ----
 def run():
     producer = make_producer()
+    log.info(f"Ingestor started — polling {len(BUS_HOT_STOPS)} hot stops for bus")
+    log.info("Note: 5,000 trạm static đã có trong MongoDB (load_static.py)")
+    log.info("      ETA on-demand (user click) đi qua FastAPI trực tiếp")
+
     intervals = {
         "bus":     int(os.getenv("POLL_BUS_SECONDS",     "30")),
         "mrt":     int(os.getenv("POLL_MRT_SECONDS",     "600")),
-        "alerts":  int(os.getenv("POLL_ALERTS_SECONDS",  "300")),
+        "alerts":  int(os.getenv("POLL_MRT_SECONDS",     "300")),
         "carpark": int(os.getenv("POLL_CARPARK_SECONDS", "60")),
         "ev":      int(os.getenv("POLL_EV_SECONDS",      "300")),
         "taxi":    int(os.getenv("POLL_TAXI_SECONDS",    "60")),
@@ -209,15 +295,17 @@ def run():
         now = time.time()
         sent = 0
 
+        # Bus — chỉ poll BUS_HOT_STOPS (~50 trạm)
         if now - last["bus"] >= intervals["bus"]:
             for stop in BUS_HOT_STOPS:
                 for msg in fetch_bus_arrivals(stop):
                     key = f"{msg['bus_stop_code']}-{msg['service_no']}"
                     producer.send("bus-arrivals", key=key, value=msg)
                     sent += 1
-                time.sleep(0.1)
+                time.sleep(0.1)   # tránh rate limit (50 trạm × 0.1s = 5 giây)
             last["bus"] = now
 
+        # MRT crowd — poll mỗi 10 phút
         if now - last["mrt"] >= intervals["mrt"]:
             for line in MRT_LINES:
                 for msg in fetch_mrt_crowd(line):
@@ -225,24 +313,28 @@ def run():
                     sent += 1
             last["mrt"] = now
 
+        # Train alerts — poll mỗi 5 phút
         if now - last["alerts"] >= intervals["alerts"]:
             for msg in fetch_train_alerts():
                 producer.send("train-alerts", key=msg.get("line", "ALL"), value=msg)
                 sent += 1
             last["alerts"] = now
 
+        # Carpark — poll mỗi 1 phút
         if now - last["carpark"] >= intervals["carpark"]:
             for msg in fetch_carpark():
                 producer.send("carpark-lots", key=msg["carpark_id"], value=msg)
                 sent += 1
             last["carpark"] = now
 
+        # EV — poll mỗi 5 phút
         if now - last["ev"] >= intervals["ev"]:
             for msg in fetch_ev_batch():
                 producer.send("ev-stations", key=msg["location_id"], value=msg)
                 sent += 1
             last["ev"] = now
 
+        # Taxi — poll mỗi 1 phút
         if now - last["taxi"] >= intervals["taxi"]:
             for msg in fetch_taxi():
                 producer.send("taxi-positions", key=None, value=msg)
@@ -253,7 +345,8 @@ def run():
             producer.flush()
             log.info(f"Sent {sent} messages to Kafka")
 
-        time.sleep(5)
+        time.sleep(5)   # check lại sau 5 giây
+
 
 if __name__ == "__main__":
     run()

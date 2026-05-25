@@ -7,11 +7,11 @@ import pymongo
 import os
 import time
 
-KEY    = os.getenv("LTA_API_KEY", "your_key")
+KEY    = os.getenv("LTA_API_KEY", "e825ByV2QYWgz/NY8/B2Bw==")
 BASE   = "https://datamall2.mytransport.sg/ltaodataservice"
 HDRS   = {"AccountKey": KEY}
 client = pymongo.MongoClient(os.getenv("MONGODB_URI",
-         "mongodb://localhost:27017"))
+         "mongodb://root:Transit%402024@localhost:27017"))
 db     = client["transit_db"]
 
 def fetch_all(endpoint):
