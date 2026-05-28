@@ -433,23 +433,88 @@ async def get_taxi_positions():
 # ENDPOINTS BỔ SUNG CHO GRAFANA (JSON API)
 # ============================================================
 
-@app.get("/bus/speed_bus")
-async def get_speed_bus():
-    """Lấy dữ liệu speed_bus cho Grafana Panel 1"""
-    docs = list(db.speed_bus.find({}, {"_id": 0}).sort("window_start", -1).limit(1000))
-    return docs
+@app.get("/grafana/overview")
+async def grafana_overview():
+    try:
+        bus_agg = list(db.speed_bus.aggregate([{"$sort":{"window_start":-1}},{"$limit":1000},{"$group":{"_id":"$service_no"}},{"$count":"total"}]))
+        bus_total = bus_agg[0]["total"] if bus_agg else 0
 
-@app.get("/batch/hourly_pivot")
-async def get_batch_hourly_pivot():
-    """Lấy dữ liệu batch_hourly_pivot cho Grafana Panel 5"""
-    docs = list(db.batch_hourly_pivot.find({}, {"_id": 0}))
-    return docs
+        taxi_agg = list(db.speed_taxi.aggregate([{"$sort":{"window_start":-1}},{"$limit":200},{"$group":{"_id":"$window_start","total":{"$sum":"$taxi_count"}}},{"$sort":{"_id":-1}},{"$limit":1}]))
+        taxi_total = taxi_agg[0]["total"] if taxi_agg else 0
 
-@app.get("/taxi/speed_taxi")
-async def get_speed_taxi():
-    """Lấy dữ liệu speed_taxi cho Grafana Panel 4"""
-    docs = list(db.speed_taxi.find({}, {"_id": 0}).sort("window_start", -1).limit(1000))
-    return docs
+        mrt_agg = list(db.speed_mrt.aggregate([{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$station","crowd":{"$first":"$crowd_text"}}},{"$match":{"crowd":"HIGH"}},{"$count":"total"}]))
+        mrt_total = mrt_agg[0]["total"] if mrt_agg else 0
+
+        cp_agg = list(db.speed_carpark.aggregate([{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$carpark_id","status":{"$first":"$status"}}},{"$match":{"status":"FULL"}},{"$count":"total"}]))
+        cp_total = cp_agg[0]["total"] if cp_agg else 0
+
+        ev_agg = list(db.speed_ev.aggregate([{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$location_id"}},{"$count":"total"}]))
+        ev_total = ev_agg[0]["total"] if ev_agg else 0
+
+        return [{
+            "bus_services": bus_total,
+            "taxi_available": taxi_total,
+            "mrt_alerts": mrt_total,
+            "carparks_full": cp_total,
+            "ev_stations": ev_total
+        }]
+    except Exception as e:
+        return [{"error": str(e)}]
+
+@app.get("/grafana/bus/top_eta")
+async def grafana_bus_top_eta():
+    agg = [{"$sort":{"window_start":-1}},{"$limit":2000},{"$group":{"_id":"$service_no","avg_eta":{"$avg":"$avg_eta_seconds"}}},{"$sort":{"avg_eta":-1}},{"$limit":10},{"$project":{"service_no":"$_id","avg_eta_seconds":{"$round":["$avg_eta",0]},"_id":0}}]
+    return list(db.speed_bus.aggregate(agg))
+
+@app.get("/grafana/bus/load")
+async def grafana_bus_load():
+    agg = [{"$sort":{"window_start":-1}},{"$limit":1000},{"$group":{"_id":"$current_load","count":{"$sum":1}}},{"$project":{"load":"$_id","count":1,"_id":0}}]
+    return list(db.speed_bus.aggregate(agg))
+
+@app.get("/grafana/bus/trend")
+async def grafana_bus_trend():
+    agg = [{"$sort":{"window_start":-1}},{"$limit":500},{"$group":{"_id":"$window_start","avg_eta":{"$avg":"$avg_eta_seconds"}}},{"$sort":{"_id":1}},{"$project":{"window_start":"$_id","avg_eta":{"$round":["$avg_eta",0]},"_id":0}}]
+    return list(db.speed_bus.aggregate(agg))
+
+@app.get("/grafana/mrt/crowd_by_line")
+async def grafana_mrt_crowd_line():
+    agg = [{"$sort":{"ingested_at":-1}},{"$group":{"_id":{"line":"$train_line","station":"$station"},"crowd":{"$first":"$crowd_text"}}},{"$group":{"_id":"$_id.line","HIGH":{"$sum":{"$cond":[{"$eq":["$crowd","HIGH"]},1,0]}},"MEDIUM":{"$sum":{"$cond":[{"$eq":["$crowd","MEDIUM"]},1,0]}},"LOW":{"$sum":{"$cond":[{"$eq":["$crowd","LOW"]},1,0]}}}},{"$project":{"line":"$_id","HIGH":1,"MEDIUM":1,"LOW":1,"_id":0}},{"$sort":{"line":1}}]
+    return list(db.speed_mrt.aggregate(agg))
+
+@app.get("/grafana/mrt/alerts")
+async def grafana_mrt_alerts():
+    agg = [{"$sort":{"ingested_at":-1}},{"$group":{"_id":{"station":"$station","line":"$train_line"},"crowd_text":{"$first":"$crowd_text"},"alert_level":{"$first":"$alert_level"},"updated_at":{"$first":"$ingested_at"}}},{"$match":{"alert_level":{"$ne":"NORMAL"}}},{"$project":{"station":"$_id.station","train_line":"$_id.line","crowd_text":1,"alert_level":1,"updated_at":1,"_id":0}},{"$sort":{"alert_level":1,"station":1}}]
+    return list(db.speed_mrt.aggregate(agg))
+
+@app.get("/grafana/carpark/status")
+async def grafana_carpark_status():
+    agg = [{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$carpark_id","status":{"$first":"$status"}}},{"$group":{"_id":"$status","count":{"$sum":1}}},{"$project":{"status":"$_id","count":1,"_id":0}},{"$sort":{"count":-1}}]
+    return list(db.speed_carpark.aggregate(agg))
+
+@app.get("/grafana/carpark/top")
+async def grafana_carpark_top():
+    agg = [{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$carpark_id","development":{"$first":"$development"},"area":{"$first":"$area"},"agency":{"$first":"$agency"},"available_lots":{"$first":"$available_lots"},"status":{"$first":"$status"}}},{"$sort":{"available_lots":-1}},{"$limit":20},{"$project":{"development":1,"area":1,"agency":1,"available_lots":1,"status":1,"_id":0}}]
+    return list(db.speed_carpark.aggregate(agg))
+
+@app.get("/grafana/taxi/hotspots")
+async def grafana_taxi_hotspots():
+    agg = [{"$sort":{"window_start":-1}},{"$limit":200},{"$sort":{"taxi_count":-1}},{"$limit":15},{"$project":{"area":{"$concat":[{"$toString":{"$round":["$center_lat",2]}},", ",{"$toString":{"$round":["$center_lng",2]}}]},"taxi_count":1,"_id":0}}]
+    return list(db.speed_taxi.aggregate(agg))
+
+@app.get("/grafana/ev/status")
+async def grafana_ev_status():
+    agg = [{"$sort":{"ingested_at":-1}},{"$group":{"_id":"$location_id","level":{"$first":"$availability_level"}}},{"$group":{"_id":"$level","count":{"$sum":1}}},{"$project":{"availability":"$_id","count":1,"_id":0}},{"$sort":{"count":-1}}]
+    return list(db.speed_ev.aggregate(agg))
+
+@app.get("/grafana/batch/pagerank")
+async def grafana_batch_pagerank():
+    agg = [{"$sort":{"importance":-1}},{"$limit":10},{"$project":{"station":"$name","importance":{"$round":["$importance",4]},"_id":0}}]
+    return list(db.batch_graph_pagerank.aggregate(agg))
+
+@app.get("/grafana/batch/bus_daily")
+async def grafana_batch_bus_daily():
+    agg = [{"$sort":{"date_sg":-1}},{"$limit":50},{"$project":{"service_no":1,"road_name":1,"avg_eta":{"$round":["$avg_eta",0]},"avg_congestion":{"$round":["$avg_congestion",1]},"reliability":1,"total_readings":1,"_id":0}}]
+    return list(db.batch_bus_daily.aggregate(agg))
 
 
 # ============================================================
